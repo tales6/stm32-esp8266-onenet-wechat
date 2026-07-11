@@ -1,0 +1,59 @@
+<view class="container">
+  <!-- 标题 -->
+  <view class="title-area">
+    <text class="main-title">智能浇花系统</text>
+    <text class="subtitle">Smart Irrigation System</text>
+  </view>
+
+  <!-- 设备在线状态 -->
+  <view class="status-bubble {{online ? 'status-online' : 'status-offline'}}">
+    <view class="status-dot"></view>
+    <text class="status-text">{{online ? '设备在线' : '设备离线'}}</text>
+  </view>
+
+  <!-- 两个气泡 -->
+  <view class="bubbles-area">
+    <view class="bubble">
+      <view class="bubble-header">
+        <text class="bubble-title">当前湿度</text>
+        <image class="bubble-icon" src="/image/湿度.png" mode="aspectFit"></image>
+      </view>
+      <text class="bubble-value">{{hum}}%</text>
+    </view>
+    <view class="bubble">
+      <view class="bubble-header">
+        <text class="bubble-title">当前阈值</text>
+        <image class="bubble-icon" src="/image/阈值.png" mode="aspectFit"></image>
+      </view>
+      <text class="bubble-value">{{yuzhi}}%</text>
+    </view>
+  </view>
+
+  <!-- 报警状态 -->
+  <view class="alarm-bubble {{alarm ? 'alarm-warn' : 'alarm-ok'}}">
+    <text class="alarm-icon">{{alarm ? '!' : '✓'}}</text>
+    <text class="alarm-text">{{alarm ? '水位过低' : '水位正常'}}</text>
+  </view>
+
+  <!-- 四个按钮 -->
+  <view class="buttons-area">
+    <view class="button-grid">
+      <view class="action-btn" bindtap="栀子花">
+        <image class="btn-icon" src="/image/栀子花.png" mode="aspectFit"></image>
+        <text class="btn-text">栀子花</text>
+      </view>
+      <view class="action-btn" bindtap="绿萝">
+        <image class="btn-icon" src="/image/盆栽05.png" mode="aspectFit"></image>
+        <text class="btn-text">绿萝</text>
+      </view>
+      <view class="action-btn" bindtap="吊兰">
+        <image class="btn-icon" src="/image/观叶植物-吊兰.png" mode="aspectFit"></image>
+        <text class="btn-text">吊兰</text>
+      </view>
+      <view class="action-btn" bindtap="自定义">
+        <image class="btn-icon" src="/image/自定义菜单.png" mode="aspectFit"></image>
+        <text class="btn-text">自定义</text>
+      </view>
+    </view>
+  </view>
+</view>

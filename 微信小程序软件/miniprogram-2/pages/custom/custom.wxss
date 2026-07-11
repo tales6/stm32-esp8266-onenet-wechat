@@ -1,0 +1,136 @@
+.container {
+  padding: 60rpx 40rpx;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: 100vh;
+}
+
+.title-area {
+  text-align: center;
+  margin-bottom: 80rpx;
+}
+
+.main-title {
+  display: block;
+  font-size: 56rpx;
+  color: white;
+  font-weight: bold;
+  margin-bottom: 20rpx;
+}
+
+.subtitle {
+  font-size: 28rpx;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* 整个设置区域固定宽度 */
+.setting-area {
+  flex: 1;
+  background: white;
+  border-radius: 40rpx;
+  padding: 50rpx 40rpx;
+  box-shadow: 0 20rpx 60rpx rgba(0, 0, 0, 0.1);
+  margin-bottom: 80rpx;
+  margin-top: 50rpx;
+  width: 80%;
+  box-sizing: border-box;
+}
+
+/* 当前值显示区域 - 固定高度和宽度 */
+.current-value {
+  display: flex;           /* 使用flex布局 */
+  align-items: center;     /* 垂直居中 */
+  justify-content: center; /* 水平居中 */
+  padding: 40rpx;
+  background: #f8f9ff;
+  border-radius: 30rpx;
+  margin-bottom: 50rpx;
+  min-height: 180rpx;      /* 固定最小高度 */
+  box-sizing: border-box;
+}
+
+.label {
+  font-size: 32rpx;
+  color: #666;
+  flex-shrink: 0;          /* 防止标签被压缩 */
+}
+
+.value {
+  font-size: 72rpx;
+  font-weight: bold;
+  color: #667eea;
+  margin-left: 50rpx;
+  min-width: 130rpx;       /* 固定数字区域最小宽度 */
+  text-align: center;      /* 数字居中 */
+  font-family: monospace;  /* 使用等宽字体，所有数字宽度一致 */
+  flex-shrink: 0;          /* 防止数字被压缩 */
+}
+
+.slider-area {
+  margin-bottom: 60rpx;
+}
+
+.slider-label {
+  display: block;
+  font-size: 28rpx;
+  color: #666;
+  margin-bottom: 20rpx;
+}
+
+.preset-buttons {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 60rpx;
+}
+
+.preset-btn {
+  width: 22%;
+  height: 80rpx;
+  line-height: 80rpx;
+  text-align: center;
+  background: #f0f0f0;
+  border-radius: 40rpx;
+  font-size: 32rpx;
+  color: #333;
+  transition: all 0.3s;
+}
+
+.preset-btn:active {
+  transform: scale(0.95);
+  background: #667eea;
+  color: white;
+}
+
+.save-btn, .cancel-btn {
+  width: 100%;
+  height: 96rpx;
+  line-height: 96rpx;
+  border-radius: 48rpx;
+  font-size: 36rpx;
+  font-weight: bold;
+  margin-bottom: 30rpx;
+  text-align: center;  /* 添加文本居中 */
+  display: flex;        /* 使用 flex 布局确保居中 */
+  align-items: center;  /* 垂直居中 */
+  justify-content: center; /* 水平居中 */
+  box-sizing: border-box;  /* 确保边框不影响大小 */
+}
+
+.save-btn {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+}
+
+.save-btn:active {
+  opacity: 0.8;
+}
+
+.cancel-btn {
+  background: white;
+  color: #999;
+  border: 2rpx solid #e0e0e0;
+}
+
+.cancel-btn:active {
+  background: #f5f5f5;
+}

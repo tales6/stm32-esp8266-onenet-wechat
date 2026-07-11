@@ -1,0 +1,15 @@
+# STM32 build outputs
+Listing/
+*.uvguix.*
+*.uvoptx
+DebugConfig/
+RTE/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+
+# Logs
+*.log

@@ -1,0 +1,36 @@
+<view class="container">
+  <view class="title-area">
+    <text class="main-title">阈值设置</text>
+    <text class="subtitle">Threshold Setting</text>
+  </view>
+
+  <view class="setting-area">
+    <view class="current-value">
+      <text class="label">当前阈值：</text>
+      <text class="value">{{threshold}}%</text>
+    </view>
+
+    <view class="slider-area">
+      <text class="slider-label">拖动设置新阈值：</text>
+      <slider 
+        bindchange="onSliderChange" 
+        min="0" 
+        max="100" 
+        value="{{threshold}}" 
+        show-value 
+        activeColor="#667eea"
+        block-color="#764ba2"
+      />
+    </view>
+
+    <view class="preset-buttons">
+     <view class="preset-btn" bindtap="setPreset" data-value="25">25%</view>
+      <view class="preset-btn" bindtap="setPreset" data-value="50">50%</view>
+      <view class="preset-btn" bindtap="setPreset" data-value="75">75%</view>
+      <view class="preset-btn" bindtap="setPreset" data-value="100">100%</view>
+    </view>
+
+    <button class="save-btn" bindtap="saveThreshold">保存设置</button>
+    <button class="cancel-btn" bindtap="cancel">取消</button>
+  </view>
+</view>

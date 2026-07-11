@@ -1,0 +1,226 @@
+page {
+  background: #f0f7f0;
+  height: 100%;
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 60rpx 30rpx 60rpx 30rpx;
+}
+
+/* 标题区 */
+.title-area {
+  text-align: center;
+  width: 80%;
+  height: 160rpx;
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  justify-content: center;
+  margin: 0 auto;
+}
+
+.main-title {
+  display: block;
+  font-size: 52rpx;
+  font-weight: bold;
+  color: #2e7d32;
+}
+
+.subtitle {
+  display: block;
+  font-size: 26rpx;
+  color: #66bb6a;
+  margin-top: 10rpx;
+}
+
+/* 设备在线状态 */
+.status-bubble {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  width: 90%;
+  margin: 30rpx auto 0;
+  padding: 18rpx 0;
+  border-radius: 30rpx;
+  font-size: 30rpx;
+  font-weight: bold;
+}
+
+.status-online {
+  background: #e8f5e9;
+  color: #2e7d32;
+  border: 2rpx solid #a5d6a7;
+}
+
+.status-offline {
+  background: #fafafa;
+  color: #999;
+  border: 2rpx solid #e0e0e0;
+}
+
+.status-dot {
+  width: 18rpx;
+  height: 18rpx;
+  border-radius: 50%;
+}
+
+.status-online .status-dot {
+  background: #4caf50;
+  box-shadow: 0 0 8rpx rgba(76, 175, 80, 0.6);
+}
+
+.status-offline .status-dot {
+  background: #ccc;
+}
+
+.status-text {
+  font-size: 30rpx;
+}
+
+/* 双气泡区 */
+.bubbles-area {
+  display: flex;
+  flex-shrink: 0;
+  gap: 60rpx;
+  align-items: center;
+  width: 100%;
+  margin-top: 80rpx;
+}
+
+.bubble {
+  flex: 1;
+  background: white;
+  border-radius: 40rpx;
+  padding: 30rpx 20rpx;
+  text-align: center;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* 气泡头部：文字+图标排成一行 */
+.bubble-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  margin-bottom: 12rpx;
+}
+
+.bubble-title {
+  display: block;
+  font-size: 32rpx;
+  color: #555;
+}
+
+.bubble-icon {
+  width: 36rpx;
+  height: 36rpx;
+}
+
+.bubble-value {
+  display: block;
+  font-size: 64rpx;
+  font-weight: bold;
+  color: #2e7d32;
+}
+
+/* 报警状态气泡 */
+.alarm-bubble {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16rpx;
+  width: 90%;
+  margin: 80rpx auto 0;
+  padding: 28rpx 0;
+  border-radius: 30rpx;
+  font-size: 36rpx;
+  font-weight: bold;
+}
+
+.alarm-ok {
+  background: #e8f5e9;
+  color: #2e7d32;
+  border: 2rpx solid #a5d6a7;
+}
+
+.alarm-warn {
+  background: #ffebee;
+  color: #c62828;
+  border: 2rpx solid #ef9a9a;
+}
+
+.alarm-icon {
+  width: 48rpx;
+  height: 48rpx;
+  line-height: 48rpx;
+  text-align: center;
+  border-radius: 50%;
+  font-size: 28rpx;
+  font-weight: bold;
+}
+
+.alarm-ok .alarm-icon {
+  background: #a5d6a7;
+  color: white;
+}
+
+.alarm-warn .alarm-icon {
+  background: #ef9a9a;
+  color: white;
+}
+
+.alarm-text {
+  font-size: 34rpx;
+}
+
+/* 按钮区 */
+.buttons-area {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  width: 90%;
+  margin-top: -30rpx;
+}
+
+.button-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 40rpx;
+  width: 100%;
+}
+
+.action-btn {
+  background: white;
+  border-radius: 40rpx;
+  padding: 40rpx 20rpx;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15rpx;
+  box-shadow: 0 4rpx 12rpx rgba(0, 0, 0, 0.05);
+}
+
+.action-btn:active {
+  transform: scale(0.96);
+}
+
+.btn-icon {
+  width: 60rpx;
+  height: 60rpx;
+}
+
+.btn-text {
+  font-size: 36rpx;
+  color: #2e7d32;
+  font-weight: 600;
+}
