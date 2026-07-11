@@ -57,35 +57,20 @@
   <!-- 项目概述 -->
   <section>
     <h2>项目概述</h2>
-    <p>本项目来自浙江理工大学机械电子工程专业《嵌入式系统实验与设计》课程设计，设计并实现了一套基于STM32F103C8T6微控制器的智能浇花系统。系统具备土壤湿度自动检测、智能浇水决策、水位监测报警及远程数据交互功能。</p>
-    <div style="margin-top:14px;">
-      <p><strong>小组成员：</strong>孙文伟（软件设计、编程调试）、王谷源（硬件原理图、PCB布局布线、报告撰写）</p>
-      <p><strong>指导教师：</strong>张建义</p>
-    </div>
+    <p>本项目设计并实现了一套基于STM32F103C8T6微控制器的智能浇花系统，具备土壤湿度自动检测、智能浇水决策、水位监测报警及远程数据交互功能。</p>
   </section>
 
   <!-- 系统架构 -->
   <section>
     <h2>系统架构</h2>
-    <div class="diagram">
-      <pre>
- ┌─────────────────────────────────────────────────────────────────┐
- │                        智能浇花系统                             │
- ├──────────────┬──────────────────────┬──────────────────────────┤
- │  输入模块     │      控制核心        │      输出模块            │
- │              │                      │                          │
- │ 土壤湿度传感器│   STM32F103C8T6     │  OLED显示屏(128×64 I2C) │
- │ 水位传感器    │   ADC + DMA采集     │  继电器 + 水泵        │
- │ 4路独立按键   │   滞回控制算法      │  LED报警灯 + 蜂鸣器    │
- │              │   MQTT协议栈         │                          │
- ├──────────────┴──────────────────────┴──────────────────────────┤
- │                          通信模块                               │
- │              ESP8266 (WiFi) → OneNet云平台                      │
- │                       ↕ HTTP/MQTT                              │
- │                    微信小程序                                   │
- └─────────────────────────────────────────────────────────────────┘
-      </pre>
-    </div>
+    <p>系统采用模块化设计，以STM32F103C8T6为核心控制单元，各功能模块划分如下：</p>
+    <table>
+      <tr><th>模块分类</th><th>组成</th><th>功能</th></tr>
+      <tr><td><strong>输入模块</strong></td><td>土壤湿度传感器、水位传感器、4路独立按键</td><td>采集土壤湿度、检测水箱水位、接收用户操作</td></tr>
+      <tr><td><strong>控制核心</strong></td><td>STM32F103C8T6</td><td>ADC+DMA采集、滞回控制算法、MQTT协议栈、Flash存储</td></tr>
+      <tr><td><strong>输出模块</strong></td><td>OLED显示屏、继电器+水泵、LED报警灯+蜂鸣器</td><td>数据显示、自动浇灌、水位报警</td></tr>
+      <tr><td><strong>通信模块</strong></td><td>ESP8266 (WiFi) → OneNet云平台 → 微信小程序</td><td>远程数据交互、阈值下发</td></tr>
+    </table>
     <p>系统供电链：<strong>12V DC</strong> → TPS54302DDA (5V) → AMS1117-3.3 (3.3V)</p>
   </section>
 
@@ -303,23 +288,14 @@ wx.request({
     </div>
 
     <h3>数据交互流程</h3>
-    <div class="diagram">
-      <pre>
- 微信小程序                     OneNet API                  STM32设备
-     │                             │                          │
-     │──GET /query-device-property→│                          │
-     │←───{Humidity,Threshold}────│                          │
-     │                             │                          │
-     │                             │   MQTT PUBLISH (下行)     │
-     │                             │←─────────────────────────│
-     │                             │                          │
-     │──POST /set-device-property─→│                          │
-     │                             │──MQTT PUBLISH (命令下发)─→│
-     │                             │                          │
-     │                  (每3秒轮询)│                          │
-     │←───────────────────────────│                          │
-      </pre>
-    </div>
+    <p>系统采用<strong>微信小程序 → OneNet HTTP API → OneNet云平台 → MQTT → STM32设备</strong>的数据链路：</p>
+    <ol>
+      <li>微信小程序每3秒通过OneNet HTTP API轮询设备属性（GET /thingmodel/query-device-property）</li>
+      <li>STM32设备每1秒通过MQTT发布土壤湿度、阈值、报警状态到OneNet</li>
+      <li>用户在小程序中修改阈值时，通过POST /thingmodel/set-device-property 下发指令</li>
+      <li>OneNet通过MQTT下行通道将新阈值推送到STM32设备</li>
+      <li>STM32解析下行数据后更新本地阈值并存入Flash</li>
+    </ol>
   </section>
 
   <!-- PCB与硬件 -->
@@ -369,7 +345,7 @@ wx.request({
 </div>
 
 <footer>
-  浙江理工大学 机械电子工程 · 嵌入式系统实验与设计 · 2026
+  STM32 智能浇花系统 · 项目文档
 </footer>
 
 </body>
