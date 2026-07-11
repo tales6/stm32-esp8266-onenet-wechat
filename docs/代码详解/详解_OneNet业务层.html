@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OneNet 云平台业务层模块详解</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+  background: #e8f5e9;
+  color: #1b5e20;
+  line-height: 1.8;
+}
+.header {
+  background: linear-gradient(135deg, #004d40, #00695c);
+  color: #fff;
+  padding: 2.5rem 2rem 2rem;
+  text-align: center;
+}
+.header h1 { font-size: 2rem; letter-spacing: 2px; }
+.header .sub { font-size: 0.95rem; opacity: .85; margin-top: 6px; }
+nav {
+  position: sticky; top: 0; z-index: 100;
+  background: #1b5e20;
+  padding: 10px 16px;
+  display: flex; flex-wrap: wrap; gap: 6px 12px;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(0,0,0,.25);
+}
+nav a {
+  color: #c8e6c9;
+  text-decoration: none;
+  font-size: 0.88rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background .2s;
+}
+nav a:hover { background: #2e7d32; color: #fff; }
+.container { max-width: 960px; margin: 0 auto; padding: 24px 16px 60px; }
+section {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.08);
+  padding: 28px 30px;
+  margin-bottom: 24px;
+}
+section h2 {
+  font-size: 1.35rem;
+  color: #004d40;
+  border-left: 4px solid #004d40;
+  padding-left: 14px;
+  margin-bottom: 18px;
+}
+section h3 {
+  font-size: 1.05rem;
+  color: #1b5e20;
+  margin: 20px 0 10px;
+}
+section p { margin-bottom: 14px; }
+section ul, section ol { margin-bottom: 14px; padding-left: 24px; }
+section li { margin-bottom: 6px; }
+
+.callout {
+  border-left: 4px solid;
+  border-radius: 0 6px 6px 0;
+  padding: 12px 16px;
+  margin: 16px 0;
+  font-size: 0.92rem;
+}
+.callout.info { background: #e3f2fd; border-color: #1976d2; }
+.callout.warn { background: #fff3e0; border-color: #f57c00; }
+.callout.ok   { background: #e8f5e9; border-color: #388e3c; }
+.callout.arch { background: #f3e5f5; border-color: #7b1fa2; }
+
+pre.code-block {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  border-radius: 8px;
+  padding: 16px 18px;
+  overflow-x: auto;
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  margin: 12px 0 18px;
+  tab-size: 4;
+}
+pre.code-block .kw { color: #cba6f7; }
+pre.code-block .fn { color: #89b4fa; }
+pre.code-block .str { color: #a6e3a1; }
+pre.code-block .cm { color: #6c7086; }
+pre.code-block .num { color: #fab387; }
+pre.code-block .tp { color: #f5c2e7; }
+pre.code-block .mp { color: #f9e2af; }
+pre.code-block .op { color: #89dceb; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 14px 0 18px;
+  font-size: 0.9rem;
+}
+thead th {
+  background: #004d40;
+  color: #fff;
+  padding: 10px 12px;
+  text-align: left;
+  font-weight: 600;
+}
+tbody td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #ddd;
+}
+tbody tr:nth-child(even) { background: #f1f8e9; }
+tbody tr:hover { background: #dcedc8; }
+
+.decl {
+  background: #f1f8f5;
+  border: 1px solid #a5d6a7;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-family: Consolas, monospace;
+  font-size: 0.88rem;
+  margin: 10px 0 16px;
+  white-space: pre-wrap;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>OneNet 云平台业务层模块详解</h1>
+  <div class="sub">文件：Onenet/onenet.c + Onenet/onenet.h &nbsp;|&nbsp; 基于 MqttKit + ESP8266 实现</div>
+</div>
+
+<nav>
+  <a href="#overview">模块概述</a>
+  <a href="#login">设备登录</a>
+  <a href="#sub">订阅下行主题</a>
+  <a href="#pub">发布属性数据</a>
+  <a href="#ping">心跳保活</a>
+  <a href="#rev">下行数据解析</a>
+  <a href="#private">私有发布函数</a>
+  <a href="#cjson">cJSON 解析流程</a>
+  <a href="#full">完整代码</a>
+</nav>
+
+<div class="container">
+
+<!-- ==================== 1 ==================== -->
+<section id="overview">
+<h2>1. 模块概述</h2>
+<p><code>onenet.c / onenet.h</code> 是智能灌溉系统的云平台业务逻辑层，位于 MqttKit 协议栈之上。该模块充当设备与 OneNet 云平台之间的桥梁，负责：</p>
+<ul>
+  <li><strong>设备登录</strong> &mdash; 使用 PROID / TOKEN / DEVID 向 OneNet 进行 MQTT 连接鉴权</li>
+  <li><strong>属性上报</strong> &mdash; 将土壤湿度、阈值、报警状态等属性定期发布到 OneNet 云</li>
+  <li><strong>命令接收与处理</strong> &mdash; 订阅下行主题，接收并解析平台下发的阈值修改等命令</li>
+  <li><strong>心跳保活</strong> &mdash; 定期发送 PINGREQ 维持 MQTT 连接</li>
+</ul>
+
+<div class="callout arch">
+  <strong>架构位置：</strong>
+  <code>main.c</code> → <code>onenet.c</code> → <code>MqttKit.c</code> → <code>esp8266.c</code> → UART 硬件
+</div>
+
+<table>
+  <thead><tr><th>常量</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>PROID</td><td>OneNet 产品 ID（作为 MQTT Username）</td></tr>
+    <tr><td>TOKEN</td><td>设备密钥（作为 MQTT Password）</td></tr>
+    <tr><td>DEVID</td><td>设备 ID（作为 MQTT Client ID）</td></tr>
+  </tbody>
+</table>
+</section>
+
+<!-- ==================== 2 ==================== -->
+<section id="login">
+<h2>2. 设备登录 — OneNet_DevLink</h2>
+<p>设备登录是上云的第一步。函数流程：构造 CONNECT 报文 → 通过 ESP8266 发送 → 等待 CONNACK 响应 → 检查返回码。</p>
+
+<pre class="code-block"><span class="tp">uint8_t</span> <span class="fn">OneNet_DevLink</span>(<span class="kw">void</span>)
+{
+  <span class="tp">MQTT_PACKET_STRUCTURE</span> mqttPkt = <span class="fn">MQTT_NewBuffer</span>(512);
+  <span class="tp">uint8_t</span> retry = 3;
+  <span class="tp">uint8_t</span> result = 1;
+
+  <span class="kw">while</span> (retry--) {
+    <span class="cm">// 使用 PROID/TOKEN/DEVID 构造 CONNECT 报文</span>
+    <span class="fn">MQTT_PacketConnect</span>(&mqttPkt,
+      DEVID,       <span class="cm">// Client ID</span>
+      PROID,       <span class="cm">// Username</span>
+      TOKEN,       <span class="cm">// Password</span>
+      60,          <span class="cm">// Keep Alive = 60 秒</span>
+      1);          <span class="cm">// Clean Session</span>
+
+    <span class="cm">// 通过 ESP8266 发送 CONNECT</span>
+    <span class="fn">ESP8266_SendData</span>(mqttPkt._data, mqttPkt._len);
+
+    <span class="cm">// 等待 CONNACK 响应</span>
+    <span class="tp">uint8_t</span> *recvBuf = <span class="fn">ESP8266_GetIPD</span>(1000);
+    <span class="kw">if</span> (recvBuf) {
+      <span class="tp">uint8_t</span> type = <span class="fn">MQTT_UnPacketRecv</span>(recvBuf, 0);
+      <span class="kw">if</span> (type == MQTT_CONNACK) {
+        <span class="tp">uint8_t</span> ret = <span class="fn">MQTT_UnPacketConnectAck</span>(recvBuf);
+        <span class="kw">if</span> (ret == 0) {
+          result = 0;  <span class="cm">// 登录成功</span>
+          <span class="kw">break</span>;
+        }
+      }
+    }
+  }
+
+  <span class="fn">MQTT_DeleteBuffer</span>(&mqttPkt);
+  <span class="kw">return</span> result;  <span class="cm">// 0 = 成功，非 0 = 失败</span>
+}</pre>
+
+<div class="callout ok">
+  <strong>容错机制：</strong>函数内部包含 3 次重试逻辑。主调函数（main.c）会持续重试直到登录成功，并在 OLED 上显示 "OneNet 连接中..." / "OneNet 连接成功"。
+</div>
+
+<div class="callout info">
+  <strong>CONNACK 返回码速查：</strong>0 = 接受 &check; &nbsp; 1 = 协议版本拒绝 &nbsp; 2 = 标识符被拒 &nbsp; 3 = 服务器不可用 &nbsp; 4 = 用户名/密码错误 &nbsp; 5 = 未授权
+</div>
+</section>
+
+<!-- ==================== 3 ==================== -->
+<section id="sub">
+<h2>3. 订阅下行主题 — OneNet_Subscribe</h2>
+<p>设备登录成功后，订阅 OneNet 平台的下行命令主题，用于接收属性设置指令：</p>
+
+<pre class="code-block"><span class="tp">uint8_t</span> <span class="fn">OneNet_Subscribe</span>(<span class="kw">void</span>)
+{
+  <span class="tp">MQTT_PACKET_STRUCTURE</span> mqttPkt = <span class="fn">MQTT_NewBuffer</span>(256);
+
+  <span class="cm">// 构造订阅主题：$sys/{proid}/{devname}/thing/property/set</span>
+  <span class="tp">char</span> topic[128];
+  <span class="fn">sprintf</span>(topic, <span class="str">"$sys/%s/%s/thing/property/set"</span>, PROID, DEVID);
+
+  <span class="fn">MQTT_PacketSubscribe</span>(&mqttPkt, topic, MQTT_QOS_1, <span class="num">1</span>);
+  <span class="fn">ESP8266_SendData</span>(mqttPkt._data, mqttPkt._len);
+
+  <span class="cm">// 等待 SUBACK</span>
+  <span class="tp">uint8_t</span> *recvBuf = <span class="fn">ESP8266_GetIPD</span>(2000);
+  <span class="tp">uint8_t</span> result = 1;
+  <span class="kw">if</span> (recvBuf) {
+    <span class="tp">uint8_t</span> type = <span class="fn">MQTT_UnPacketRecv</span>(recvBuf, 0);
+    <span class="kw">if</span> (type == MQTT_SUBACK) result = 0;
+  }
+
+  <span class="fn">MQTT_DeleteBuffer</span>(&mqttPkt);
+  <span class="kw">return</span> result;
+}</pre>
+
+<div class="callout warn">
+  <strong>主题格式：</strong>OneNet 标准属性设置主题为 <code>$sys/{proid}/{devname}/thing/property/set</code>，其中 <code>{proid}</code> 和 <code>{devname}</code> 需替换为实际产品 ID 和设备名。
+</div>
+</section>
+
+<!-- ==================== 4 ==================== -->
+<section id="pub">
+<h2>4. 发布属性数据 — OneNet_Publish</h2>
+<p>设备定期将传感器数据上报到 OneNet 平台。使用 PUBLISH 报文发送 JSON 格式的属性数据：</p>
+
+<pre class="code-block"><span class="kw">void</span> <span class="fn">OneNet_Publish</span>(<span class="tp">char</span> *data)
+{
+  <span class="tp">MQTT_PACKET_STRUCTURE</span> mqttPkt = <span class="fn">MQTT_NewBuffer</span>(512);
+
+  <span class="cm">// 构造发布主题：$sys/{proid}/{devname}/thing/property/post</span>
+  <span class="tp">char</span> topic[128];
+  <span class="fn">sprintf</span>(topic, <span class="str">"$sys/%s/%s/thing/property/post"</span>, PROID, DEVID);
+
+  <span class="fn">MQTT_PacketPublish</span>(&mqttPkt, topic,
+    (<span class="tp">uint8_t</span> *)data, <span class="fn">strlen</span>(data),
+    MQTT_QOS_1, <span class="num">1</span>);
+
+  <span class="fn">ESP8266_SendData</span>(mqttPkt._data, mqttPkt._len);
+  <span class="fn">MQTT_DeleteBuffer</span>(&mqttPkt);
+}</pre>
+
+<p>上报的 JSON 数据格式示例：</p>
+<pre class="code-block">{
+  <span class="str">"id"</span>: <span class="str">"123"</span>,
+  <span class="str">"params"</span>: {
+    <span class="str">"Humidity"</span>:   { <span class="str">"value"</span>: <span class="num">68.5</span> },
+    <span class="str">"Threshold"</span>:  { <span class="str">"value"</span>: <span class="num">50</span> },
+    <span class="str">"alarm"</span>:      { <span class="str">"value"</span>: <span class="kw">false</span> }
+  }
+}</pre>
+
+<table>
+  <thead><tr><th>属性名</th><th>类型</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>Humidity</td><td>float</td><td>当前土壤湿度百分比（0.0 ~ 100.0）</td></tr>
+    <tr><td>Threshold</td><td>int</td><td>湿度阈值（用户可远程修改）</td></tr>
+    <tr><td>alarm</td><td>bool</td><td>缺水报警标志</td></tr>
+  </tbody>
+</table>
+</section>
+
+<!-- ==================== 5 ==================== -->
+<section id="ping">
+<h2>5. 心跳保活 — OneNet_SendPing</h2>
+<p>定期发送 PINGREQ 以保持 MQTT 连接不被服务器关闭：</p>
+
+<pre class="code-block"><span class="kw">void</span> <span class="fn">OneNet_SendPing</span>(<span class="kw">void</span>)
+{
+  <span class="tp">MQTT_PACKET_STRUCTURE</span> mqttPkt = <span class="fn">MQTT_NewBuffer</span>(16);
+  <span class="fn">MQTT_PacketPing</span>(&mqttPkt);
+  <span class="fn">ESP8266_SendData</span>(mqttPkt._data, mqttPkt._len);
+  <span class="fn">MQTT_DeleteBuffer</span>(&mqttPkt);
+}</pre>
+
+<div class="callout info">
+  <strong>调度方式：</strong>在 main.c 主循环中通过 <code>PingCount</code> 计数控制。每 3000 个循环周期（约 30 秒）调用一次 <code>OneNet_SendPing()</code>。
+</div>
+</section>
+
+<!-- ==================== 6 ==================== -->
+<section id="rev">
+<h2>6. 下行数据解析 — OneNet_RevPro（核心函数）</h2>
+<p>这是整个程序中<strong>最复杂</strong>的函数。每次主循环收到来自 ESP8266 的数据后，调用此函数进行完整的协议解析流程：识别报文类型 → 解析 PUBLISH 内容 → 提取 JSON 参数 → 更新全局变量 → 发送应答。</p>
+
+<pre class="code-block"><span class="kw">void</span> <span class="fn">OneNet_RevPro</span>(<span class="tp">uint8_t</span> *recvBuf)
+{
+  <span class="tp">uint8_t</span> type = <span class="fn">MQTT_UnPacketRecv</span>(recvBuf, 0);
+  <span class="tp">char</span> *topic = <span class="kw">NULL</span>;
+  <span class="tp">uint8_t</span> *payload = <span class="kw">NULL</span>;
+  <span class="tp">uint16_t</span> payloadLen = 0;
+  <span class="tp">uint8_t</span> qos = 0;
+  <span class="tp">uint16_t</span> packetId = 0;
+
+  <span class="kw">switch</span> (type) {
+    <span class="kw">case</span> MQTT_PUBLISH:
+    <span class="kw">case</span> MQTT_CMD_TYPE: {
+      <span class="cm">// 解析 PUBLISH 报文</span>
+      <span class="fn">MQTT_UnPacketPublish</span>(recvBuf, &topic, &payload,
+        &payloadLen, &qos, &packetId);
+
+      <span class="cm">// QoS 1 时需要回复 PUBACK</span>
+      <span class="kw">if</span> (qos == MQTT_QOS_1) {
+        <span class="tp">MQTT_PACKET_STRUCTURE</span> ackPkt = <span class="fn">MQTT_NewBuffer</span>(16);
+        <span class="fn">MQTT_PacketPublishAck</span>(&ackPkt, packetId);
+        <span class="fn">ESP8266_SendData</span>(ackPkt._data, ackPkt._len);
+        <span class="fn">MQTT_DeleteBuffer</span>(&ackPkt);
+      }
+
+      <span class="cm">// 使用 cJSON 解析 JSON 负载</span>
+      <span class="tp">cJSON</span> *json = <span class="fn">cJSON_Parse</span>((<span class="kw">const</span> <span class="tp">char</span> *)payload);
+      <span class="kw">if</span> (json) {
+        <span class="tp">cJSON</span> *params = <span class="fn">cJSON_GetObjectItem</span>(json, <span class="str">"params"</span>);
+        <span class="kw">if</span> (params) {
+          <span class="tp">cJSON</span> *thresh = <span class="fn">cJSON_GetObjectItem</span>(params, <span class="str">"Threshold"</span>);
+          <span class="kw">if</span> (thresh) {
+            <span class="cm">// 兼容两种 JSON 格式：直接数字 or {"value": 数字}</span>
+            <span class="kw">if</span> (thresh->type == cJSON_Number) {
+              Humidity_Threshold = thresh->valuedouble;
+            } <span class="kw">else</span> {
+              <span class="tp">cJSON</span> *val = <span class="fn">cJSON_GetObjectItem</span>(thresh, <span class="str">"value"</span>);
+              <span class="kw">if</span> (val && val->type == cJSON_Number)
+                Humidity_Threshold = val->valuedouble;
+            }
+            <span class="cm">// 持久化到 Flash</span>
+            <span class="fn">Threshold_Save</span>(Humidity_Threshold);
+          }
+        }
+        <span class="fn">cJSON_Delete</span>(json);
+
+        <span class="cm">// 发送属性设置应答 set_reply</span>
+        <span class="tp">char</span> reply[128];
+        <span class="fn">sprintf</span>(reply,
+          <span class="str">"{\"id\":\"%s\",\"code\":200,\"msg\":\"success\"}"</span>,
+          <span class="str">""</span>);
+        <span class="fn">MQTT_SendPublish</span>(
+          <span class="str">"$sys/%s/%s/thing/property/set_reply"</span>,
+          reply);
+      }
+      <span class="kw">break</span>;
+    }
+
+    <span class="kw">case</span> MQTT_PINGRESP:
+      <span class="cm">// 收到心跳响应，无需处理</span>
+      <span class="kw">break</span>;
+
+    <span class="kw">default</span>:
+      <span class="kw">break</span>;
+  }
+}</pre>
+
+<div class="callout warn">
+  <strong>重要：</strong>函数内部分配的 MQTT 缓冲区（ackPkt）和 cJSON 对象（json）必须在使用后释放。每次主循环调用 <code>OneNet_RevPro</code> 后，上层还需释放 recvBuf（由 ESP8266_GetIPD 分配）。
+</div>
+</section>
+
+<!-- ==================== 7 ==================== -->
+<section id="private">
+<h2>7. 私有发布函数 — MQTT_SendPublish</h2>
+<p>这是一个独立于 MqttKit 的辅助函数，手动构造 PUBLISH 报文（逐字节写入），用于发送属性设置回复（set_reply）：</p>
+
+<pre class="code-block"><span class="kw">void</span> <span class="fn">MQTT_SendPublish</span>(<span class="tp">char</span> *topic, <span class="tp">char</span> *payload)
+{
+  <span class="tp">uint8_t</span> buf[256];
+  <span class="tp">uint16_t</span> topicLen = <span class="fn">strlen</span>(topic);
+  <span class="tp">uint16_t</span> payloadLen = <span class="fn">strlen</span>(payload);
+  <span class="tp">uint16_t</span> idx = 0;
+
+  <span class="cm">// 固定报头：PUBLISH 类型, QoS 1</span>
+  buf[idx++] = (MQTT_PUBLISH << 4) | (MQTT_QOS_1 << 1);
+
+  <span class="cm">// 剩余长度 = topic 长度 + payload 长度 + 2 (topicLen 字段)</span>
+  <span class="tp">uint8_t</span> remainLen = topicLen + payloadLen + 2;
+  <span class="tp">uint8_t</span> lenBuf[4];
+  <span class="tp">uint8_t</span> lenBytes = <span class="fn">MQTT_DumpLength</span>(remainLen, lenBuf);
+  <span class="fn">memcpy</span>(buf + idx, lenBuf, lenBytes);
+  idx += lenBytes;
+
+  <span class="cm">// Topic Name (UTF-8)</span>
+  buf[idx++] = (topicLen >> 8) & 0xFF;
+  buf[idx++] = topicLen & 0xFF;
+  <span class="fn">memcpy</span>(buf + idx, topic, topicLen);
+  idx += topicLen;
+
+  <span class="cm">// Payload</span>
+  <span class="fn">memcpy</span>(buf + idx, payload, payloadLen);
+  idx += payloadLen;
+
+  <span class="fn">ESP8266_SendData</span>(buf, idx);
+}</pre>
+
+<div class="callout info">
+  <strong>为什么不使用 MQTT_PacketPublish？</strong>此函数出现在日志调试阶段，为了简化依赖而直接手动构造报文，避免了创建和删除缓冲区的开销。实际效果与 MqttKit 的标准 API 一致。
+</div>
+</section>
+
+<!-- ==================== 8 ==================== -->
+<section id="cjson">
+<h2>8. cJSON 解析流程</h2>
+<p>下行命令的 JSON 解析过程涉及 cJSON 库的以下步骤：</p>
+
+<ol>
+  <li><strong>cJSON_Parse</strong> &mdash; 将原始字符串解析为 cJSON 对象树</li>
+  <li><strong>cJSON_GetObjectItem</strong> &mdash; 逐层提取 "params" → "Threshold" 节点</li>
+  <li><strong>类型兼容</strong> &mdash;
+    <ul>
+      <li>若 Threshold 是 <strong>cJSON_Number</strong>（直接数值），直接读取 <code>valuedouble</code></li>
+      <li>若 Threshold 是 <strong>cJSON_Object</strong>（如 <code>{"value": 50}</code>），继续解析 <code>value</code> 子字段</li>
+    </ul>
+  </li>
+  <li><strong>cJSON_Delete</strong> &mdash; 释放整个对象树，防止内存泄漏</li>
+</ol>
+
+<p>JSON 解析的两种格式兼容示例：</p>
+
+<pre class="code-block"><span class="cm">// 格式一：直接数值（简化版）</span>
+{ <span class="str">"Threshold"</span>: <span class="num">50</span> }
+
+<span class="cm">// 格式二：对象形式（标准 OneNet 属性格式）</span>
+{ <span class="str">"Threshold"</span>: { <span class="str">"value"</span>: <span class="num">50</span> } }</pre>
+
+<div class="callout warn">
+  <strong>内存注意：</strong>cJSON 解析后的对象树通过 <code>cJSON_Parse</code> 动态分配内存。每次解析完成后必须调用 <code>cJSON_Delete</code> 释放，否则会造成内存泄漏。在资源受限的 STM32 上，一次泄漏就可能导致系统崩溃。
+</div>
+</section>
+
+<!-- ==================== 9 ==================== -->
+<section id="full">
+<h2>9. 完整代码</h2>
+
+<h3>onenet.h</h3>
+<pre class="code-block"><span class="mp">#ifndef</span> __ONENET_H
+<span class="mp">#define</span> __ONENET_H
+
+<span class="mp">#include</span> <span class="str">"MqttKit.h"</span>
+
+<span class="cm">/* OneNet 鉴权信息 */</span>
+<span class="mp">#define PROID</span>  <span class="str">"你的产品ID"</span>
+<span class="mp">#define TOKEN</span>  <span class="str">"你的设备Token"</span>
+<span class="mp">#define DEVID</span>  <span class="str">"你的设备ID"</span>
+
+<span class="cm">/* API */</span>
+<span class="tp">uint8_t</span> <span class="fn">OneNet_DevLink</span>(<span class="kw">void</span>);
+<span class="tp">uint8_t</span> <span class="fn">OneNet_Subscribe</span>(<span class="kw">void</span>);
+<span class="kw">void</span>   <span class="fn">OneNet_Publish</span>(<span class="tp">char</span> *data);
+<span class="kw">void</span>   <span class="fn">OneNet_SendPing</span>(<span class="kw">void</span>);
+<span class="kw">void</span>   <span class="fn">OneNet_RevPro</span>(<span class="tp">uint8_t</span> *recvBuf);
+<span class="kw">void</span>   <span class="fn">MQTT_SendPublish</span>(<span class="tp">char</span> *topic, <span class="tp">char</span> *payload);
+
+<span class="mp">#endif</span></pre>
+
+<h3>onenet.c</h3>
+<pre class="code-block"><span class="mp">#include</span> <span class="str">"onenet.h"</span>
+<span class="mp">#include</span> <span class="str">"esp8266.h"</span>
+<span class="mp">#include</span> <span class="str">&lt;stdio.h&gt;</span>
+<span class="mp">#include</span> <span class="str">&lt;string.h&gt;</span>
+<span class="mp">#include</span> <span class="str">&lt;stdlib.h&gt;</span>
+<span class="mp">#include</span> <span class="str">"cJSON.h"</span>
+
+<span class="tp">uint16_t</span> Humidity_Threshold = <span class="num">50</span>;  <span class="cm">// 全局阈值，可在 main.c 中访问</span>
+
+<span class="cm">/* ============== 设备登录 ============== */</span>
+<span class="tp">uint8_t</span> <span class="fn">OneNet_DevLink</span>(<span class="kw">void</span>)
+{
+  <span class="tp">MQTT_PACKET_STRUCTURE</span> mqttPkt = <span class="fn">MQTT_NewBuffer</span>(512);
+  <span class="tp">uint8_t</span> retry = 3;
+  <span class="tp">uint8_t</span> result = 1;
+
+  <span class="kw">while</span> (retry--) {
+    <span class="fn">MQTT_PacketConnect</span>(&mqttPkt, DEVID, PROID, TOKEN, <span class="num">60</span>, <span class="num">1</span>);
+    <span class="fn">ESP8266_SendData</span>(mqttPkt._data, mqttPkt._len);
+
+    <span class="tp">uint8_t</span> *recvBuf = <span class="fn">ESP8266_GetIPD</span>(<span class="num">1000</span>);
+    <span class="kw">if</span> (recvBuf) {
+      <span class="kw">if</span> (<span class="fn">MQTT_UnPacketRecv</span>(recvBuf, <span class="num">0</span>) == MQTT_CONNACK) {
+        <span class="kw">if</span> (<span class="fn">MQTT_UnPacketConnectAck</span>(recvBuf) == <span class="num">0</span>) {
+          result = <span class="num">0</span>;
+          <span class="kw">break</span>;
+        }
+      }
+    }
+  }
+
+  <span class="fn">MQTT_DeleteBuffer</span>(&mqttPkt);
+  <span class="kw">return</span> result;
+}
+
+<span class="cm">/* ============== 订阅下行主题 ============== */</span>
+<span class="tp">uint8_t</span> <span class="fn">OneNet_Subscribe</span>(<span class="kw">void</span>)
+{
+  <span class="tp">MQTT_PACKET_STRUCTURE</span> mqttPkt = <span class="fn">MQTT_NewBuffer</span>(256);
+  <span class="tp">char</span> topic[128];
+  <span class="fn">sprintf</span>(topic, <span class="str">"$sys/%s/%s/thing/property/set"</span>, PROID, DEVID);
+  <span class="fn">MQTT_PacketSubscribe</span>(&mqttPkt, topic, MQTT_QOS_1, <span class="num">1</span>);
+  <span class="fn">ESP8266_SendData</span>(mqttPkt._data, mqttPkt._len);
+
+  <span class="tp">uint8_t</span> result = <span class="num">1</span>;
+  <span class="tp">uint8_t</span> *recvBuf = <span class="fn">ESP8266_GetIPD</span>(<span class="num">2000</span>);
+  <span class="kw">if</span> (recvBuf && <span class="fn">MQTT_UnPacketRecv</span>(recvBuf, <span class="num">0</span>) == MQTT_SUBACK)
+    result = <span class="num">0</span>;
+
+  <span class="fn">MQTT_DeleteBuffer</span>(&mqttPkt);
+  <span class="kw">return</span> result;
+}
+
+<span class="cm">/* ============== 发布属性数据 ============== */</span>
+<span class="kw">void</span> <span class="fn">OneNet_Publish</span>(<span class="tp">char</span> *data)
+{
+  <span class="tp">MQTT_PACKET_STRUCTURE</span> mqttPkt = <span class="fn">MQTT_NewBuffer</span>(<span class="num">512</span>);
+  <span class="tp">char</span> topic[128];
+  <span class="fn">sprintf</span>(topic, <span class="str">"$sys/%s/%s/thing/property/post"</span>, PROID, DEVID);
+  <span class="fn">MQTT_PacketPublish</span>(&mqttPkt, topic,
+    (<span class="tp">uint8_t</span> *)data, <span class="fn">strlen</span>(data), MQTT_QOS_1, <span class="num">1</span>);
+  <span class="fn">ESP8266_SendData</span>(mqttPkt._data, mqttPkt._len);
+  <span class="fn">MQTT_DeleteBuffer</span>(&mqttPkt);
+}
+
+<span class="cm">/* ============== 心跳保活 ============== */</span>
+<span class="kw">void</span> <span class="fn">OneNet_SendPing</span>(<span class="kw">void</span>)
+{
+  <span class="tp">MQTT_PACKET_STRUCTURE</span> mqttPkt = <span class="fn">MQTT_NewBuffer</span>(<span class="num">16</span>);
+  <span class="fn">MQTT_PacketPing</span>(&mqttPkt);
+  <span class="fn">ESP8266_SendData</span>(mqttPkt._data, mqttPkt._len);
+  <span class="fn">MQTT_DeleteBuffer</span>(&mqttPkt);
+}
+
+<span class="cm">/* ============== 私有发布函数 ============== */</span>
+<span class="kw">void</span> <span class="fn">MQTT_SendPublish</span>(<span class="tp">char</span> *topic, <span class="tp">char</span> *payload)
+{
+  <span class="tp">uint8_t</span> buf[<span class="num">256</span>];
+  <span class="tp">uint16_t</span> topicLen = <span class="fn">strlen</span>(topic);
+  <span class="tp">uint16_t</span> payloadLen = <span class="fn">strlen</span>(payload);
+  <span class="tp">uint16_t</span> idx = <span class="num">0</span>;
+
+  buf[idx++] = (MQTT_PUBLISH << 4) | (MQTT_QOS_1 << 1);
+  <span class="tp">uint8_t</span> remain = topicLen + payloadLen + 2;
+  <span class="tp">uint8_t</span> lb[<span class="num">4</span>], lc = <span class="fn">MQTT_DumpLength</span>(remain, lb);
+  <span class="fn">memcpy</span>(buf + idx, lb, lc); idx += lc;
+  buf[idx++] = (topicLen >> 8) & 0xFF;
+  buf[idx++] = topicLen & 0xFF;
+  <span class="fn">memcpy</span>(buf + idx, topic, topicLen); idx += topicLen;
+  <span class="fn">memcpy</span>(buf + idx, payload, payloadLen); idx += payloadLen;
+  <span class="fn">ESP8266_SendData</span>(buf, idx);
+}
+
+<span class="cm">/* ============== 下行数据解析（核心） ============== */</span>
+<span class="kw">void</span> <span class="fn">OneNet_RevPro</span>(<span class="tp">uint8_t</span> *recvBuf)
+{
+  <span class="tp">uint8_t</span> type = <span class="fn">MQTT_UnPacketRecv</span>(recvBuf, <span class="num">0</span>);
+  <span class="tp">char</span> *topic = <span class="kw">NULL</span>;
+  <span class="tp">uint8_t</span> *payload = <span class="kw">NULL</span>;
+  <span class="tp">uint16_t</span> payloadLen = <span class="num">0</span>;
+  <span class="tp">uint8_t</span> qos = <span class="num">0</span>;
+  <span class="tp">uint16_t</span> packetId = <span class="num">0</span>;
+
+  <span class="kw">switch</span> (type) {
+    <span class="kw">case</span> MQTT_PUBLISH:
+    <span class="kw">case</span> MQTT_CMD_TYPE: {
+      <span class="fn">MQTT_UnPacketPublish</span>(recvBuf, &topic, &payload,
+        &payloadLen, &qos, &packetId);
+
+      <span class="kw">if</span> (qos == MQTT_QOS_1) {
+        <span class="tp">MQTT_PACKET_STRUCTURE</span> ack = <span class="fn">MQTT_NewBuffer</span>(<span class="num">16</span>);
+        <span class="fn">MQTT_PacketPublishAck</span>(&ack, packetId);
+        <span class="fn">ESP8266_SendData</span>(ack._data, ack._len);
+        <span class="fn">MQTT_DeleteBuffer</span>(&ack);
+      }
+
+      <span class="tp">cJSON</span> *json = <span class="fn">cJSON_Parse</span>((<span class="kw">const</span> <span class="tp">char</span> *)payload);
+      <span class="kw">if</span> (json) {
+        <span class="tp">cJSON</span> *params = <span class="fn">cJSON_GetObjectItem</span>(json, <span class="str">"params"</span>);
+        <span class="kw">if</span> (params) {
+          <span class="tp">cJSON</span> *t = <span class="fn">cJSON_GetObjectItem</span>(params, <span class="str">"Threshold"</span>);
+          <span class="kw">if</span> (t) {
+            <span class="kw">if</span> (t->type == cJSON_Number)
+              Humidity_Threshold = t->valuedouble;
+            <span class="kw">else</span> {
+              <span class="tp">cJSON</span> *v = <span class="fn">cJSON_GetObjectItem</span>(t, <span class="str">"value"</span>);
+              <span class="kw">if</span> (v && v->type == cJSON_Number)
+                Humidity_Threshold = v->valuedouble;
+            }
+            <span class="fn">Threshold_Save</span>(Humidity_Threshold);
+          }
+        }
+        <span class="fn">cJSON_Delete</span>(json);
+
+        <span class="tp">char</span> reply[<span class="num">128</span>];
+        <span class="fn">sprintf</span>(reply,
+          <span class="str">"{\"id\":\"%s\",\"code\":200,\"msg\":\"success\"}"</span>,
+          <span class="str">""</span>);
+        <span class="fn">MQTT_SendPublish</span>(
+          <span class="str">"$sys/%s/%s/thing/property/set_reply"</span>,
+          reply);
+      }
+      <span class="kw">break</span>;
+    }
+    <span class="kw">default</span>: <span class="kw">break</span>;
+  }
+}</pre>
+
+</div><!-- /container -->
+
+</body>
+</html>

@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MQTT 协议栈模块详解 (MqttKit v1.6)</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+  background: #e8f5e9;
+  color: #1b5e20;
+  line-height: 1.8;
+}
+.header {
+  background: linear-gradient(135deg, #004d40, #00695c);
+  color: #fff;
+  padding: 2.5rem 2rem 2rem;
+  text-align: center;
+}
+.header h1 { font-size: 2rem; letter-spacing: 2px; }
+.header .sub { font-size: 0.95rem; opacity: .85; margin-top: 6px; }
+nav {
+  position: sticky; top: 0; z-index: 100;
+  background: #1b5e20;
+  padding: 10px 16px;
+  display: flex; flex-wrap: wrap; gap: 6px 12px;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(0,0,0,.25);
+}
+nav a {
+  color: #c8e6c9;
+  text-decoration: none;
+  font-size: 0.88rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background .2s;
+}
+nav a:hover { background: #2e7d32; color: #fff; }
+.container { max-width: 960px; margin: 0 auto; padding: 24px 16px 60px; }
+section {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.08);
+  padding: 28px 30px;
+  margin-bottom: 24px;
+}
+section h2 {
+  font-size: 1.35rem;
+  color: #004d40;
+  border-left: 4px solid #004d40;
+  padding-left: 14px;
+  margin-bottom: 18px;
+}
+section h3 {
+  font-size: 1.05rem;
+  color: #1b5e20;
+  margin: 20px 0 10px;
+}
+section p, section ul, section ol { margin-bottom: 14px; }
+section ul, section ol { padding-left: 24px; }
+section li { margin-bottom: 6px; }
+
+/* Callouts */
+.callout {
+  border-left: 4px solid;
+  border-radius: 0 6px 6px 0;
+  padding: 12px 16px;
+  margin: 16px 0;
+  font-size: 0.92rem;
+}
+.callout.info { background: #e3f2fd; border-color: #1976d2; }
+.callout.warn { background: #fff3e0; border-color: #f57c00; }
+.callout.ok   { background: #e8f5e9; border-color: #388e3c; }
+
+/* Code blocks */
+pre.code-block {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  border-radius: 8px;
+  padding: 16px 18px;
+  overflow-x: auto;
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  margin: 12px 0 18px;
+  tab-size: 4;
+}
+pre.code-block .kw { color: #cba6f7; }   /* keywords */
+pre.code-block .fn { color: #89b4fa; }   /* function */
+pre.code-block .str { color: #a6e3a1; }  /* string */
+pre.code-block .cm { color: #6c7086; }   /* comment */
+pre.code-block .num { color: #fab387; }  /* number */
+pre.code-block .tp { color: #f5c2e7; }   /* type */
+pre.code-block .mp { color: #f9e2af; }   /* macro / preprocessor */
+pre.code-block .op { color: #89dceb; }   /* operator */
+
+/* Tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 14px 0 18px;
+  font-size: 0.9rem;
+}
+thead th {
+  background: #004d40;
+  color: #fff;
+  padding: 10px 12px;
+  text-align: left;
+  font-weight: 600;
+}
+tbody td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #ddd;
+}
+tbody tr:nth-child(even) { background: #f1f8e9; }
+tbody tr:hover { background: #dcedc8; }
+
+/* Enums / structs shown inline */
+.decl {
+  background: #f1f8f5;
+  border: 1px solid #a5d6a7;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-family: Consolas, monospace;
+  font-size: 0.88rem;
+  margin: 10px 0 16px;
+  white-space: pre-wrap;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>MQTT 协议栈模块详解</h1>
+  <div class="sub">MqttKit v1.6 &mdash; 文件：Onenet/MqttKit.c + Onenet/MqttKit.h &nbsp;|&nbsp; 作者：Li Zhi Qu</div>
+</div>
+
+<nav>
+  <a href="#overview">模块概述</a>
+  <a href="#struct">数据结构</a>
+  <a href="#buf">缓冲区管理</a>
+  <a href="#len">剩余长度编码</a>
+  <a href="#type">数据包类型识别</a>
+  <a href="#connect">CONNECT</a>
+  <a href="#connack">CONNACK</a>
+  <a href="#subscribe">SUBSCRIBE</a>
+  <a href="#publish">PUBLISH</a>
+  <a href="#puback">PUBACK</a>
+  <a href="#ping">PING</a>
+  <a href="#header">头文件常量</a>
+  <a href="#full">完整代码</a>
+</nav>
+
+<div class="container">
+
+<!-- ==================== 1 ==================== -->
+<section id="overview">
+<h2>1. 模块概述</h2>
+<p>MqttKit 是由 Li Zhi Qu 编写的轻量级 MQTT v3.1.1 协议栈实现，专为资源受限的嵌入式平台（STM32 + ESP8266）设计。该模块实现了 MQTT 3.1.1 协议的核心子集：</p>
+<ul>
+  <li><strong>CONNECT</strong> &mdash; 连接建立（含用户名/密码鉴权）</li>
+  <li><strong>CONNACK</strong> &mdash; 连接确认解析</li>
+  <li><strong>SUBSCRIBE</strong> &mdash; 主题订阅</li>
+  <li><strong>PUBLISH</strong> (QoS 0/1) &mdash; 消息发布与接收</li>
+  <li><strong>PUBACK</strong> &mdash; QoS 1 发布确认</li>
+  <li><strong>PINGREQ / PINGRESP</strong> &mdash; 心跳保活</li>
+</ul>
+<p>缓冲区采用 <code>malloc / free</code> 动态管理，同时支持静态缓冲区模式，灵活适配不同内存策略。</p>
+
+<div class="callout info">
+  <strong>协议版本：</strong>MQTT v3.1.1（协议级别 4）&nbsp;|&nbsp;
+  <strong>支持 QoS：</strong>0（至多一次）、1（至少一次）
+</div>
+</section>
+
+<!-- ==================== 2 ==================== -->
+<section id="struct">
+<h2>2. 数据结构</h2>
+<p>核心数据结构 <code>MQTT_PACKET_STRUCTURE</code> 用于描述一个 MQTT 协议缓冲区：</p>
+
+<pre class="code-block"><span class="kw">typedef</span> <span class="kw">struct</span> {
+  <span class="tp">uint8_t</span>   *_data;       <span class="cm">// 协议缓冲区指针</span>
+  <span class="tp">uint16_t</span>   _len;        <span class="cm">// 已写入的数据长度</span>
+  <span class="tp">uint16_t</span>   _size;       <span class="cm">// 缓冲区总容量</span>
+  <span class="tp">uint8_t</span>    _memFlag;    <span class="cm">// 内存标记</span>
+} <span class="tp">MQTT_PACKET_STRUCTURE</span>;</pre>
+
+<p><code>_memFlag</code> 取值为以下枚举常量之一：</p>
+
+<div class="decl"><span class="kw">enum</span> {
+  MEM_FLAG_NULL   = 0,    <span class="cm">// 无内存分配</span>
+  MEM_FLAG_ALLOC  = 1,    <span class="cm">// malloc 动态分配</span>
+  MEM_FLAG_STATIC = 2,    <span class="cm">// 静态缓冲区</span>
+};</div>
+
+<div class="callout ok">
+  <strong>设计考量：</strong>区分 STATIC 与 ALLOC 标记使得同一套 API 可以同时服务于栈上静态数组和堆上动态内存，避免不必要的内存拷贝。
+</div>
+</section>
+
+<!-- ==================== 3 ==================== -->
+<section id="buf">
+<h2>3. 缓冲区管理</h2>
+
+<h3>MQTT_NewBuffer &mdash; 创建缓冲区</h3>
+<pre class="code-block"><span class="tp">MQTT_PACKET_STRUCTURE</span> <span class="fn">MQTT_NewBuffer</span>(<span class="tp">uint16_t</span> size)
+{
+  <span class="tp">MQTT_PACKET_STRUCTURE</span> packet;
+  packet._data = <span class="kw">NULL</span>;
+  packet._len  = 0;
+  packet._size = 0;
+  packet._memFlag = MEM_FLAG_NULL;
+
+  <span class="kw">if</span> (size == 0) <span class="kw">return</span> packet;
+
+  packet._data = (<span class="tp">uint8_t</span> *)<span class="fn">malloc</span>(size);
+  <span class="kw">if</span> (packet._data) {
+    packet._size = size;
+    packet._memFlag = MEM_FLAG_ALLOC;
+  }
+  <span class="kw">return</span> packet;
+}</pre>
+
+<h3>MQTT_DeleteBuffer &mdash; 释放缓冲区</h3>
+<pre class="code-block"><span class="kw">void</span> <span class="fn">MQTT_DeleteBuffer</span>(<span class="tp">MQTT_PACKET_STRUCTURE</span> *packet)
+{
+  <span class="kw">if</span> (packet && packet->_data && packet->_memFlag == MEM_FLAG_ALLOC) {
+    <span class="fn">free</span>(packet->_data);
+  }
+  packet->_data = <span class="kw">NULL</span>;
+  packet->_len  = 0;
+  packet->_size = 0;
+  packet->_memFlag = MEM_FLAG_NULL;
+}</pre>
+
+<div class="callout warn">
+  <strong>注意：</strong>只有 <code>MEM_FLAG_ALLOC</code> 标记的缓冲区才会被 free 释放。静态缓冲区（MEM_FLAG_STATIC）由调用方自行管理生命周期。
+</div>
+
+<p>静态缓冲区使用示例：</p>
+<pre class="code-block"><span class="tp">uint8_t</span> stackBuf[128];
+<span class="tp">MQTT_PACKET_STRUCTURE</span> pkt;
+pkt._data    = stackBuf;
+pkt._size    = <span class="kw">sizeof</span>(stackBuf);
+pkt._len     = 0;
+pkt._memFlag = MEM_FLAG_STATIC;</pre>
+</section>
+
+<!-- ==================== 4 ==================== -->
+<section id="len">
+<h2>4. 剩余长度编码（Variable-Length Encoding）</h2>
+<p>MQTT v3.1.1 协议使用可变长度编码（Variable Length Encoding）表示剩余长度（Remaining Length）。每个字节的低 7 位存放数据，最高位（bit 7）作为延续标志位：</p>
+<ul>
+  <li>若最高位为 1，表示后续还有字节</li>
+  <li>若最高位为 0，表示当前是最后一个字节</li>
+  <li>最大支持 268,435,455 字节（约 256 MB），最多使用 4 个字节</li>
+</ul>
+
+<h3>编码：MQTT_DumpLength</h3>
+<pre class="code-block"><span class="tp">uint8_t</span> <span class="fn">MQTT_DumpLength</span>(<span class="tp">uint32_t</span> len, <span class="tp">uint8_t</span> *buf)
+{
+  <span class="tp">uint8_t</span> bytes = 0;
+  <span class="kw">do</span> {
+    <span class="tp">uint8_t</span> byte = len % 128;
+    len /= 128;
+    <span class="kw">if</span> (len > 0) byte |= 0x80;
+    buf[bytes++] = byte;
+  } <span class="kw">while</span> (len > 0);
+  <span class="kw">return</span> bytes;
+}</pre>
+
+<h3>解码：MQTT_ReadLength</h3>
+<pre class="code-block"><span class="tp">uint32_t</span> <span class="fn">MQTT_ReadLength</span>(<span class="tp">uint8_t</span> *buf, <span class="tp">uint8_t</span> *count)
+{
+  <span class="tp">uint32_t</span> len = 0;
+  <span class="tp">uint8_t</span>  multiplier = 1;
+  <span class="tp">uint8_t</span>  byte;
+  *count = 0;
+
+  <span class="kw">do</span> {
+    byte = buf[(*count)++];
+    len += (byte & 0x7F) * multiplier;
+    multiplier *= 128;
+  } <span class="kw">while</span> (byte & 0x80);
+
+  <span class="kw">return</span> len;
+}</pre>
+
+<div class="callout info">
+  <strong>示例：</strong>长度 64（0x40）→ 编码为 <code>[0x40]</code>（1 字节）；长度 321（0x141）→ 编码为 <code>[0x81, 0x02]</code>（2 字节）。
+</div>
+</section>
+
+<!-- ==================== 5 ==================== -->
+<section id="type">
+<h2>5. 数据包类型识别</h2>
+<p><code>MQTT_UnPacketRecv</code> 是解析入口函数。MQTT 固定报头（Fixed Header）的第一个字节的高 4 位表示数据包类型：</p>
+
+<pre class="code-block"><span class="tp">uint8_t</span> <span class="fn">MQTT_UnPacketRecv</span>(<span class="tp">uint8_t</span> *buf, <span class="tp">uint8_t</span> len)
+{
+  <span class="tp">uint8_t</span> type = (buf[0] >> 4) & 0x0F;   <span class="cm">// 取高4位 = 包类型</span>
+
+  <span class="kw">switch</span> (type) {
+    <span class="kw">case</span> MQTT_PUBLISH: {
+      <span class="tp">uint8_t</span> topicLen = (buf[2] << 8) | buf[3];
+      <span class="cm">// 检查主题是否以 $creq 开头 => 命令下发</span>
+      <span class="kw">if</span> (topicLen > 5 && <span class="fn">memcmp</span>(buf + 4, <span class="str">"$creq"</span>, 5) == 0) {
+        <span class="kw">return</span> MQTT_CMD_TYPE;
+      }
+      <span class="kw">return</span> MQTT_PUBLISH;
+    }
+    <span class="kw">case</span> MQTT_CONNACK:  <span class="kw">return</span> MQTT_CONNACK;
+    <span class="kw">case</span> MQTT_SUBACK:   <span class="kw">return</span> MQTT_SUBACK;
+    <span class="kw">case</span> MQTT_PUBACK:   <span class="kw">return</span> MQTT_PUBACK;
+    <span class="kw">case</span> MQTT_PINGRESP: <span class="kw">return</span> MQTT_PINGRESP;
+    <span class="kw">default</span>:           <span class="kw">return</span> MQTT_UNKNOW_TYPE;
+  }
+}</pre>
+
+<div class="callout warn">
+  <strong>特殊处理：</strong>对于 PUBLISH 类型，额外检查主题（Topic）中是否包含 <code>$creq</code> 前缀。OneNet 平台的下行命令使用此特殊主题，被识别为 <code>MQTT_CMD_TYPE</code> 单独处理。
+</div>
+</section>
+
+<!-- ==================== 6 ==================== -->
+<section id="connect">
+<h2>6. CONNECT 数据包</h2>
+<p><code>MQTT_PacketConnect</code> 构造连接报文，包含协议名、协议级别、标志位、保活时间和负载信息：</p>
+
+<pre class="code-block"><span class="kw">void</span> <span class="fn">MQTT_PacketConnect</span>(<span class="tp">MQTT_PACKET_STRUCTURE</span> *pkt,
+  <span class="tp">char</span> *clientID, <span class="tp">char</span> *username, <span class="tp">char</span> *password,
+  <span class="tp">uint16_t</span> keepalive, <span class="tp">uint8_t</span> cleanSession)
+{
+  <span class="tp">uint8_t</span> buf[256];
+  <span class="tp">uint16_t</span> idx = 0;
+
+  <span class="cm">// 协议名 "MQTT"</span>
+  buf[idx++] = 0x00; buf[idx++] = 0x04;
+  buf[idx++] = <span class="str">'M'</span>;  buf[idx++] = <span class="str">'Q'</span>;
+  buf[idx++] = <span class="str">'T'</span>;  buf[idx++] = <span class="str">'T'</span>;
+
+  <span class="cm">// 协议级别 4 = MQTT v3.1.1</span>
+  buf[idx++] = 0x04;
+
+  <span class="cm">// 连接标志位：CleanSession, Will, Username, Password</span>
+  <span class="tp">uint8_t</span> flags = 0;
+  <span class="kw">if</span> (cleanSession) flags |= 0x02;
+  <span class="kw">if</span> (username)     flags |= 0x80;
+  <span class="kw">if</span> (password)     flags |= 0x40;
+  buf[idx++] = flags;
+
+  <span class="cm">// Keep Alive (秒)</span>
+  buf[idx++] = (keepalive >> 8) & 0xFF;
+  buf[idx++] = keepalive & 0xFF;
+
+  <span class="cm">// Client ID (UTF-8 编码)</span>
+  <span class="tp">uint16_t</span> clen = <span class="fn">strlen</span>(clientID);
+  buf[idx++] = (clen >> 8) & 0xFF;
+  buf[idx++] = clen & 0xFF;
+  <span class="fn">memcpy</span>(buf + idx, clientID, clen); idx += clen;
+
+  <span class="cm">// Username</span>
+  <span class="kw">if</span> (username) {
+    <span class="tp">uint16_t</span> ulen = <span class="fn">strlen</span>(username);
+    buf[idx++] = (ulen >> 8) & 0xFF;
+    buf[idx++] = ulen & 0xFF;
+    <span class="fn">memcpy</span>(buf + idx, username, ulen); idx += ulen;
+  }
+
+  <span class="cm">// Password</span>
+  <span class="kw">if</span> (password) {
+    <span class="tp">uint16_t</span> plen = <span class="fn">strlen</span>(password);
+    buf[idx++] = (plen >> 8) & 0xFF;
+    buf[idx++] = plen & 0xFF;
+    <span class="fn">memcpy</span>(buf + idx, password, plen); idx += plen;
+  }
+
+  <span class="cm">// 剩余长度 + 固定报头</span>
+  <span class="tp">uint8_t</span> lenBuf[4];
+  <span class="tp">uint8_t</span> lenBytes = <span class="fn">MQTT_DumpLength</span>(idx, lenBuf);
+
+  pkt->_data[0] = (MQTT_CONNECT << 4) | 0x00;   <span class="cm">// 固定报头第1字节</span>
+  <span class="fn">memcpy</span>(pkt->_data + 1, lenBuf, lenBytes);
+  <span class="fn">memcpy</span>(pkt->_data + 1 + lenBytes, buf, idx);
+  pkt->_len = 1 + lenBytes + idx;
+}</pre>
+
+<p>在智能灌溉系统中，OneNet 平台的鉴权信息映射如下：</p>
+<table>
+  <thead><tr><th>MQTT 字段</th><th>OneNet 映射</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>Client ID</td><td>DEVID</td><td>设备 ID（唯一标识）</td></tr>
+    <tr><td>Username</td><td>PROID</td><td>产品 ID</td></tr>
+    <tr><td>Password</td><td>TOKEN</td><td>设备密钥（鉴权令牌）</td></tr>
+  </tbody>
+</table>
+</section>
+
+<!-- ==================== 7 ==================== -->
+<section id="connack">
+<h2>7. CONNACK 解析</h2>
+<p><code>MQTT_UnPacketConnectAck</code> 解析服务器返回的连接确认报文。CONNACK 固定为 4 字节：</p>
+<ul>
+  <li>字节 0：固定报头（0x20）</li>
+  <li>字节 1：剩余长度（0x02）</li>
+  <li>字节 2：Session Present 标志</li>
+  <li>字节 3：连接返回码</li>
+</ul>
+
+<pre class="code-block"><span class="tp">uint8_t</span> <span class="fn">MQTT_UnPacketConnectAck</span>(<span class="tp">uint8_t</span> *buf)
+{
+  <span class="cm">// buf[2]: Session Present (bit 0)</span>
+  <span class="cm">// buf[3]: Return Code (0 = 连接接受)</span>
+  <span class="kw">return</span> buf[3];   <span class="cm">// 返回 0 表示成功</span>
+}</pre>
+
+<div class="callout ok">
+  <strong>返回码含义：</strong>0 = 连接接受，1 = 协议版本拒绝，2 = 标识符被拒，3 = 服务器不可用，4 = 用户名或密码错误，5 = 未授权。
+</div>
+</section>
+
+<!-- ==================== 8 ==================== -->
+<section id="subscribe">
+<h2>8. SUBSCRIBE 数据包</h2>
+<p><code>MQTT_PacketSubscribe</code> 构造订阅请求报文。每个订阅主题后跟一个 QoS 字节：</p>
+
+<pre class="code-block"><span class="tp">uint8_t</span> <span class="fn">MQTT_PacketSubscribe</span>(<span class="tp">MQTT_PACKET_STRUCTURE</span> *pkt,
+  <span class="tp">char</span> *topic, <span class="tp">uint8_t</span> qos, <span class="tp">uint16_t</span> packetId)
+{
+  <span class="tp">uint16_t</span> topicLen = <span class="fn">strlen</span>(topic);
+  <span class="tp">uint8_t</span> payload[256], idx = 0;
+
+  <span class="cm">// Packet Identifier</span>
+  payload[idx++] = (packetId >> 8) & 0xFF;
+  payload[idx++] = packetId & 0xFF;
+
+  <span class="cm">// Topic Filter (UTF-8 编码)</span>
+  payload[idx++] = (topicLen >> 8) & 0xFF;
+  payload[idx++] = topicLen & 0xFF;
+  <span class="fn">memcpy</span>(payload + idx, topic, topicLen); idx += topicLen;
+
+  <span class="cm">// QoS Byte</span>
+  payload[idx++] = qos & 0x03;
+
+  <span class="cm">// 剩余长度编码</span>
+  <span class="tp">uint8_t</span> lenBuf[4];
+  <span class="tp">uint8_t</span> lenBytes = <span class="fn">MQTT_DumpLength</span>(idx, lenBuf);
+
+  pkt->_data[0] = (MQTT_SUBSCRIBE << 4) | 0x02;  <span class="cm">// bit 1 = 固定为 1 (SUBSCRIBE)</span>
+  <span class="fn">memcpy</span>(pkt->_data + 1, lenBuf, lenBytes);
+  <span class="fn">memcpy</span>(pkt->_data + 1 + lenBytes, payload, idx);
+  pkt->_len = 1 + lenBytes + idx;
+
+  <span class="kw">return</span> 1;
+}</pre>
+
+<table>
+  <thead><tr><th>偏移</th><th>大小</th><th>描述</th></tr></thead>
+  <tbody>
+    <tr><td>0</td><td>1</td><td>固定报头：0x82（SUBSCRIBE 类型 + bit 1 置位）</td></tr>
+    <tr><td>1+</td><td>可变</td><td>剩余长度（可变长编码）</td></tr>
+    <tr><td>...</td><td>2</td><td>Packet Identifier（报文标识符）</td></tr>
+    <tr><td>...</td><td>2</td><td>主题过滤器长度（MSB + LSB）</td></tr>
+    <tr><td>...</td><td><em>topicLen</em></td><td>主题过滤器内容</td></tr>
+    <tr><td>...</td><td>1</td><td>QoS 字节（低 2 位有效）</td></tr>
+  </tbody>
+</table>
+</section>
+
+<!-- ==================== 9 ==================== -->
+<section id="publish">
+<h2>9. PUBLISH 数据包</h2>
+
+<h3>编码：MQTT_PacketPublish</h3>
+<pre class="code-block"><span class="kw">void</span> <span class="fn">MQTT_PacketPublish</span>(<span class="tp">MQTT_PACKET_STRUCTURE</span> *pkt,
+  <span class="tp">char</span> *topic, <span class="tp">uint8_t</span> *payload, <span class="tp">uint16_t</span> payloadLen,
+  <span class="tp">uint8_t</span> qos, <span class="tp">uint16_t</span> packetId)
+{
+  <span class="tp">uint16_t</span> topicLen = <span class="fn">strlen</span>(topic);
+  <span class="tp">uint8_t</span> varHeader[256], idx = 0;
+
+  <span class="cm">// Topic Name (UTF-8)</span>
+  varHeader[idx++] = (topicLen >> 8) & 0xFF;
+  varHeader[idx++] = topicLen & 0xFF;
+  <span class="fn">memcpy</span>(varHeader + idx, topic, topicLen); idx += topicLen;
+
+  <span class="cm">// QoS 1/2 时需要 Packet ID</span>
+  <span class="kw">if</span> (qos > 0) {
+    varHeader[idx++] = (packetId >> 8) & 0xFF;
+    varHeader[idx++] = packetId & 0xFF;
+  }
+
+  <span class="cm">// 剩余长度 = 变长报头 + 负载</span>
+  <span class="tp">uint32_t</span> remainLen = idx + payloadLen;
+  <span class="tp">uint8_t</span> lenBuf[4];
+  <span class="tp">uint8_t</span> lenBytes = <span class="fn">MQTT_DumpLength</span>(remainLen, lenBuf);
+
+  <span class="cm">// 固定报头：flags = QoS << 1</span>
+  pkt->_data[0] = (MQTT_PUBLISH << 4) | (qos << 1);
+  <span class="fn">memcpy</span>(pkt->_data + 1, lenBuf, lenBytes);
+  <span class="fn">memcpy</span>(pkt->_data + 1 + lenBytes, varHeader, idx);
+  <span class="fn">memcpy</span>(pkt->_data + 1 + lenBytes + idx, payload, payloadLen);
+  pkt->_len = 1 + lenBytes + idx + payloadLen;
+}</pre>
+
+<h3>解码：MQTT_UnPacketPublish</h3>
+<pre class="code-block"><span class="kw">void</span> <span class="fn">MQTT_UnPacketPublish</span>(<span class="tp">uint8_t</span> *buf,
+  <span class="tp">char</span> **topic, <span class="tp">uint8_t</span> **payload, <span class="tp">uint16_t</span> *payloadLen,
+  <span class="tp">uint8_t</span> *qos, <span class="tp">uint16_t</span> *packetId)
+{
+  <span class="tp">uint8_t</span> count;
+  <span class="tp">uint32_t</span> remainLen = <span class="fn">MQTT_ReadLength</span>(buf + 1, &count);
+  <span class="tp">uint16_t</span> idx = 1 + count;
+
+  <span class="cm">// 提取 QoS (从固定报头 bit 1-2)</span>
+  *qos = (buf[0] >> 1) & 0x03;
+
+  <span class="cm">// 解析 Topic</span>
+  <span class="tp">uint16_t</span> topicLen = (buf[idx] << 8) | buf[idx + 1];
+  idx += 2;
+  *topic = (<span class="tp">char</span> *)(buf + idx);
+  idx += topicLen;
+
+  <span class="cm">// QoS 1/2 时提取 Packet Identifier</span>
+  <span class="kw">if</span> (*qos > 0) {
+    *packetId = (buf[idx] << 8) | buf[idx + 1];
+    idx += 2;
+  }
+
+  <span class="cm">// 负载</span>
+  *payload    = buf + idx;
+  *payloadLen = remainLen - (idx - (1 + count));
+}</pre>
+
+<div class="callout info">
+  <strong>QoS 说明：</strong>对于 QoS 0，PUBLISH 报文中不包含 Packet Identifier。QoS 1 时设置 Packet ID 并期望接收方回复 PUBACK。QoS 2 未在此实现中使用。
+</div>
+</section>
+
+<!-- ==================== 10 ==================== -->
+<section id="puback">
+<h2>10. PUBACK 数据包</h2>
+<p>PUBACK 用于对 QoS 1 的 PUBLISH 消息进行确认。报文结构非常简单：</p>
+
+<pre class="code-block"><span class="kw">void</span> <span class="fn">MQTT_PacketPublishAck</span>(<span class="tp">MQTT_PACKET_STRUCTURE</span> *pkt,
+  <span class="tp">uint16_t</span> packetId)
+{
+  pkt->_data[0] = (MQTT_PUBACK << 4) | 0x00;  <span class="cm">// 0x40</span>
+  pkt->_data[1] = 0x02;                         <span class="cm">// 剩余长度 = 2</span>
+  pkt->_data[2] = (packetId >> 8) & 0xFF;       <span class="cm">// Packet ID MSB</span>
+  pkt->_data[3] = packetId & 0xFF;              <span class="cm">// Packet ID LSB</span>
+  pkt->_len = 4;
+}</pre>
+
+<table>
+  <thead><tr><th>字节</th><th>值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>0</td><td>0x40</td><td>固定报头：PUBACK 类型</td></tr>
+    <tr><td>1</td><td>0x02</td><td>剩余长度（固定为 2）</td></tr>
+    <tr><td>2</td><td>Packet ID MSB</td><td>报文标识符高字节</td></tr>
+    <tr><td>3</td><td>Packet ID LSB</td><td>报文标识符低字节</td></tr>
+  </tbody>
+</table>
+</section>
+
+<!-- ==================== 11 ==================== -->
+<section id="ping">
+<h2>11. PING 数据包</h2>
+<p>心跳请求（PINGREQ）是最简单的 MQTT 报文：</p>
+
+<pre class="code-block"><span class="kw">void</span> <span class="fn">MQTT_PacketPing</span>(<span class="tp">MQTT_PACKET_STRUCTURE</span> *pkt)
+{
+  pkt->_data[0] = (MQTT_PINGREQ << 4) | 0x00;  <span class="cm">// 0xC0</span>
+  pkt->_data[1] = 0x00;                         <span class="cm">// 剩余长度 = 0</span>
+  pkt->_len = 2;
+}</pre>
+
+<div class="callout ok">
+  <strong>心跳间隔：</strong>主循环中每 30 秒（3000 个主循环周期）调用一次 MQTT_PacketPing 并通过 ESP8266 发送。服务器回复 PINGRESP（0xD0 0x00）表示连接仍存活。
+</div>
+</section>
+
+<!-- ==================== 12 ==================== -->
+<section id="header">
+<h2>12. 头文件常量</h2>
+
+<p>MQTT 数据包类型枚举定义在 <code>MqttKit.h</code>：</p>
+
+<pre class="code-block"><span class="kw">typedef</span> <span class="kw">enum</span> {
+  MQTT_CONNECT     = 1,    <span class="cm">// 连接请求</span>
+  MQTT_CONNACK     = 2,    <span class="cm">// 连接确认</span>
+  MQTT_PUBLISH     = 3,    <span class="cm">// 发布消息</span>
+  MQTT_PUBACK      = 4,    <span class="cm">// 发布确认（QoS 1）</span>
+  MQTT_SUBSCRIBE   = 8,    <span class="cm">// 订阅请求</span>
+  MQTT_SUBACK      = 9,    <span class="cm">// 订阅确认</span>
+  MQTT_PINGREQ     = 12,   <span class="cm">// 心跳请求</span>
+  MQTT_PINGRESP    = 13,   <span class="cm">// 心跳响应</span>
+  MQTT_DISCONNECT  = 14,   <span class="cm">// 断开连接</span>
+} <span class="tp">MqttPacketType</span>;
+
+<span class="kw">typedef</span> <span class="kw">enum</span> {
+  MQTT_QOS_0 = 0,   <span class="cm">// 至多一次</span>
+  MQTT_QOS_1 = 1,   <span class="cm">// 至少一次</span>
+  MQTT_QOS_2 = 2,   <span class="cm">// 恰好一次（未使用）</span>
+} <span class="tp">MqttQosLevel</span>;</pre>
+
+<p>扩展类型（用于 OneNet 特殊处理）：</p>
+<div class="decl"><span class="kw">enum</span> {
+  MQTT_CMD_TYPE  = 0x11,    <span class="cm">// OneNet 下行命令（$creq 主题）</span>
+  MQTT_UNKNOW_TYPE = 0xFF,  <span class="cm">// 未知/无法识别</span>
+};</div>
+</section>
+
+<!-- ==================== 13 ==================== -->
+<section id="full">
+<h2>13. 完整代码</h2>
+
+<h3>MqttKit.h（头文件接口）</h3>
+<pre class="code-block"><span class="mp">#ifndef</span> __MQTT_KIT_H
+<span class="mp">#define</span> __MQTT_KIT_H
+
+<span class="mp">#include</span> <span class="str">&lt;stdint.h&gt;</span>
+<span class="mp">#include</span> <span class="str">&lt;string.h&gt;</span>
+<span class="mp">#include</span> <span class="str">&lt;stdlib.h&gt;</span>
+
+<span class="cm">/* 缓冲区内存标记 */</span>
+<span class="kw">enum</span> {
+  MEM_FLAG_NULL   = 0,
+  MEM_FLAG_ALLOC  = 1,
+  MEM_FLAG_STATIC = 2,
+};
+
+<span class="cm">/* MQTT 数据结构 */</span>
+<span class="kw">typedef</span> <span class="kw">struct</span> {
+  <span class="tp">uint8_t</span>   *_data;
+  <span class="tp">uint16_t</span>   _len;
+  <span class="tp">uint16_t</span>   _size;
+  <span class="tp">uint8_t</span>    _memFlag;
+} <span class="tp">MQTT_PACKET_STRUCTURE</span>;
+
+<span class="cm">/* 包类型枚举 */</span>
+<span class="kw">typedef</span> <span class="kw">enum</span> {
+  MQTT_CONNECT    = 1,
+  MQTT_CONNACK    = 2,
+  MQTT_PUBLISH    = 3,
+  MQTT_PUBACK     = 4,
+  MQTT_SUBSCRIBE  = 8,
+  MQTT_SUBACK     = 9,
+  MQTT_PINGREQ    = 12,
+  MQTT_PINGRESP   = 13,
+  MQTT_DISCONNECT = 14,
+  MQTT_CMD_TYPE   = 0x11,
+  MQTT_UNKNOW_TYPE = 0xFF,
+} <span class="tp">MqttPacketType</span>;
+
+<span class="kw">typedef</span> <span class="kw">enum</span> { MQTT_QOS_0 = 0, MQTT_QOS_1 = 1, MQTT_QOS_2 = 2 } <span class="tp">MqttQosLevel</span>;
+
+<span class="cm">/* API 声明 */</span>
+<span class="tp">MQTT_PACKET_STRUCTURE</span> <span class="fn">MQTT_NewBuffer</span>(<span class="tp">uint16_t</span> size);
+<span class="kw">void</span> <span class="fn">MQTT_DeleteBuffer</span>(<span class="tp">MQTT_PACKET_STRUCTURE</span> *pkt);
+<span class="tp">uint8_t</span> <span class="fn">MQTT_DumpLength</span>(<span class="tp">uint32_t</span> len, <span class="tp">uint8_t</span> *buf);
+<span class="tp">uint32_t</span> <span class="fn">MQTT_ReadLength</span>(<span class="tp">uint8_t</span> *buf, <span class="tp">uint8_t</span> *count);
+<span class="tp">uint8_t</span> <span class="fn">MQTT_UnPacketRecv</span>(<span class="tp">uint8_t</span> *buf, <span class="tp">uint8_t</span> len);
+<span class="kw">void</span> <span class="fn">MQTT_PacketConnect</span>(<span class="tp">MQTT_PACKET_STRUCTURE</span> *pkt, <span class="tp">char</span> *cid, <span class="tp">char</span> *user, <span class="tp">char</span> *pwd, <span class="tp">uint16_t</span> ka, <span class="tp">uint8_t</span> clean);
+<span class="tp">uint8_t</span> <span class="fn">MQTT_UnPacketConnectAck</span>(<span class="tp">uint8_t</span> *buf);
+<span class="tp">uint8_t</span> <span class="fn">MQTT_PacketSubscribe</span>(<span class="tp">MQTT_PACKET_STRUCTURE</span> *pkt, <span class="tp">char</span> *topic, <span class="tp">uint8_t</span> qos, <span class="tp">uint16_t</span> pid);
+<span class="kw">void</span> <span class="fn">MQTT_PacketPublish</span>(<span class="tp">MQTT_PACKET_STRUCTURE</span> *pkt, <span class="tp">char</span> *topic, <span class="tp">uint8_t</span> *payload, <span class="tp">uint16_t</span> plen, <span class="tp">uint8_t</span> qos, <span class="tp">uint16_t</span> pid);
+<span class="kw">void</span> <span class="fn">MQTT_UnPacketPublish</span>(<span class="tp">uint8_t</span> *buf, <span class="tp">char</span> **topic, <span class="tp">uint8_t</span> **payload, <span class="tp">uint16_t</span> *plen, <span class="tp">uint8_t</span> *qos, <span class="tp">uint16_t</span> *pid);
+<span class="kw">void</span> <span class="fn">MQTT_PacketPublishAck</span>(<span class="tp">MQTT_PACKET_STRUCTURE</span> *pkt, <span class="tp">uint16_t</span> pid);
+<span class="kw">void</span> <span class="fn">MQTT_PacketPing</span>(<span class="tp">MQTT_PACKET_STRUCTURE</span> *pkt);
+
+<span class="mp">#endif</span></pre>
+
+<h3>MqttKit.c（协议实现核心）</h3>
+<pre class="code-block"><span class="mp">#include</span> <span class="str">"MqttKit.h"</span>
+
+<span class="tp">MQTT_PACKET_STRUCTURE</span> <span class="fn">MQTT_NewBuffer</span>(<span class="tp">uint16_t</span> size)
+{
+  <span class="tp">MQTT_PACKET_STRUCTURE</span> pkt = {<span class="kw">NULL</span>, 0, 0, MEM_FLAG_NULL};
+  <span class="kw">if</span> (size == 0) <span class="kw">return</span> pkt;
+  pkt._data = (<span class="tp">uint8_t</span> *)<span class="fn">malloc</span>(size);
+  <span class="kw">if</span> (pkt._data) { pkt._size = size; pkt._memFlag = MEM_FLAG_ALLOC; }
+  <span class="kw">return</span> pkt;
+}
+
+<span class="kw">void</span> <span class="fn">MQTT_DeleteBuffer</span>(<span class="tp">MQTT_PACKET_STRUCTURE</span> *pkt)
+{
+  <span class="kw">if</span> (pkt && pkt->_data && pkt->_memFlag == MEM_FLAG_ALLOC)
+    <span class="fn">free</span>(pkt->_data);
+  pkt->_data = <span class="kw">NULL</span>; pkt->_len = 0; pkt->_size = 0; pkt->_memFlag = MEM_FLAG_NULL;
+}
+
+<span class="tp">uint8_t</span> <span class="fn">MQTT_DumpLength</span>(<span class="tp">uint32_t</span> len, <span class="tp">uint8_t</span> *buf)
+{
+  <span class="tp">uint8_t</span> cnt = 0;
+  <span class="kw">do</span> {
+    <span class="tp">uint8_t</span> d = len % 128; len /= 128;
+    <span class="kw">if</span> (len > 0) d |= 0x80;
+    buf[cnt++] = d;
+  } <span class="kw">while</span> (len > 0);
+  <span class="kw">return</span> cnt;
+}
+
+<span class="tp">uint32_t</span> <span class="fn">MQTT_ReadLength</span>(<span class="tp">uint8_t</span> *buf, <span class="tp">uint8_t</span> *cnt)
+{
+  <span class="tp">uint32_t</span> len = 0, mul = 1; *cnt = 0;
+  <span class="tp">uint8_t</span> b;
+  <span class="kw">do</span> {
+    b = buf[(*cnt)++];
+    len += (b & 0x7F) * mul;
+    mul *= 128;
+  } <span class="kw">while</span> (b & 0x80);
+  <span class="kw">return</span> len;
+}
+
+<span class="tp">uint8_t</span> <span class="fn">MQTT_UnPacketRecv</span>(<span class="tp">uint8_t</span> *buf, <span class="tp">uint8_t</span> len)
+{
+  <span class="tp">uint8_t</span> type = (buf[0] >> 4) & 0x0F;
+  <span class="kw">if</span> (type == MQTT_PUBLISH) {
+    <span class="tp">uint16_t</span> tlen = (buf[2] << 8) | buf[3];
+    <span class="kw">if</span> (tlen > 5 && <span class="fn">memcmp</span>(buf + 4, <span class="str">"$creq"</span>, 5) == 0)
+      <span class="kw">return</span> MQTT_CMD_TYPE;
+    <span class="kw">return</span> MQTT_PUBLISH;
+  }
+  <span class="kw">switch</span> (type) {
+    <span class="kw">case</span> MQTT_CONNACK:   <span class="kw">return</span> MQTT_CONNACK;
+    <span class="kw">case</span> MQTT_SUBACK:    <span class="kw">return</span> MQTT_SUBACK;
+    <span class="kw">case</span> MQTT_PUBACK:    <span class="kw">return</span> MQTT_PUBACK;
+    <span class="kw">case</span> MQTT_PINGRESP:  <span class="kw">return</span> MQTT_PINGRESP;
+    <span class="kw">default</span>:            <span class="kw">return</span> MQTT_UNKNOW_TYPE;
+  }
+}
+
+<span class="kw">void</span> <span class="fn">MQTT_PacketConnect</span>(<span class="tp">MQTT_PACKET_STRUCTURE</span> *pkt,
+  <span class="tp">char</span> *cid, <span class="tp">char</span> *user, <span class="tp">char</span> *pwd,
+  <span class="tp">uint16_t</span> ka, <span class="tp">uint8_t</span> clean)
+{
+  <span class="tp">uint8_t</span> b[256], idx = 0;
+  b[idx++] = 0x00; b[idx++] = 0x04; <span class="cm">// "MQTT" len</span>
+  b[idx++] = <span class="str">'M'</span>; b[idx++] = <span class="str">'Q'</span>; b[idx++] = <span class="str">'T'</span>; b[idx++] = <span class="str">'T'</span>;
+  b[idx++] = 0x04;  <span class="cm">// 协议级别</span>
+  <span class="tp">uint8_t</span> f = clean ? 0x02 : 0;
+  <span class="kw">if</span> (user) f |= 0x80; <span class="kw">if</span> (pwd) f |= 0x40;
+  b[idx++] = f;
+  b[idx++] = (ka >> 8) & 0xFF; b[idx++] = ka & 0xFF;
+  <span class="tp">uint16_t</span> cl = <span class="fn">strlen</span>(cid);
+  b[idx++] = (cl >> 8) & 0xFF; b[idx++] = cl & 0xFF;
+  <span class="fn">memcpy</span>(b + idx, cid, cl); idx += cl;
+  <span class="kw">if</span> (user) {
+    <span class="tp">uint16_t</span> ul = <span class="fn">strlen</span>(user);
+    b[idx++] = (ul >> 8) & 0xFF; b[idx++] = ul & 0xFF;
+    <span class="fn">memcpy</span>(b + idx, user, ul); idx += ul;
+  }
+  <span class="kw">if</span> (pwd) {
+    <span class="tp">uint16_t</span> pl = <span class="fn">strlen</span>(pwd);
+    b[idx++] = (pl >> 8) & 0xFF; b[idx++] = pl & 0xFF;
+    <span class="fn">memcpy</span>(b + idx, pwd, pl); idx += pl;
+  }
+  <span class="tp">uint8_t</span> lb[4], lc = <span class="fn">MQTT_DumpLength</span>(idx, lb);
+  pkt->_data[0] = (MQTT_CONNECT << 4);
+  <span class="fn">memcpy</span>(pkt->_data + 1, lb, lc);
+  <span class="fn">memcpy</span>(pkt->_data + 1 + lc, b, idx);
+  pkt->_len = 1 + lc + idx;
+}
+
+<span class="tp">uint8_t</span> <span class="fn">MQTT_UnPacketConnectAck</span>(<span class="tp">uint8_t</span> *buf) { <span class="kw">return</span> buf[3]; }
+
+<span class="tp">uint8_t</span> <span class="fn">MQTT_PacketSubscribe</span>(<span class="tp">MQTT_PACKET_STRUCTURE</span> *pkt,
+  <span class="tp">char</span> *topic, <span class="tp">uint8_t</span> qos, <span class="tp">uint16_t</span> pid)
+{
+  <span class="tp">uint16_t</span> tl = <span class="fn">strlen</span>(topic);
+  <span class="tp">uint8_t</span> b[256], idx = 0;
+  b[idx++] = (pid >> 8) & 0xFF; b[idx++] = pid & 0xFF;
+  b[idx++] = (tl >> 8) & 0xFF;  b[idx++] = tl & 0xFF;
+  <span class="fn">memcpy</span>(b + idx, topic, tl); idx += tl;
+  b[idx++] = qos & 0x03;
+  <span class="tp">uint8_t</span> lb[4], lc = <span class="fn">MQTT_DumpLength</span>(idx, lb);
+  pkt->_data[0] = (MQTT_SUBSCRIBE << 4) | 0x02;
+  <span class="fn">memcpy</span>(pkt->_data + 1, lb, lc);
+  <span class="fn">memcpy</span>(pkt->_data + 1 + lc, b, idx);
+  pkt->_len = 1 + lc + idx;
+  <span class="kw">return</span> 1;
+}
+
+<span class="kw">void</span> <span class="fn">MQTT_PacketPublish</span>(<span class="tp">MQTT_PACKET_STRUCTURE</span> *pkt,
+  <span class="tp">char</span> *topic, <span class="tp">uint8_t</span> *payload, <span class="tp">uint16_t</span> plen,
+  <span class="tp">uint8_t</span> qos, <span class="tp">uint16_t</span> pid)
+{
+  <span class="tp">uint16_t</span> tl = <span class="fn">strlen</span>(topic), idx = 0;
+  <span class="tp">uint8_t</span> vh[256];
+  vh[idx++] = (tl >> 8) & 0xFF; vh[idx++] = tl & 0xFF;
+  <span class="fn">memcpy</span>(vh + idx, topic, tl); idx += tl;
+  <span class="kw">if</span> (qos > 0) {
+    vh[idx++] = (pid >> 8) & 0xFF; vh[idx++] = pid & 0xFF;
+  }
+  <span class="tp">uint32_t</span> rml = idx + plen;
+  <span class="tp">uint8_t</span> lb[4], lc = <span class="fn">MQTT_DumpLength</span>(rml, lb);
+  pkt->_data[0] = (MQTT_PUBLISH << 4) | (qos << 1);
+  <span class="fn">memcpy</span>(pkt->_data + 1, lb, lc);
+  <span class="fn">memcpy</span>(pkt->_data + 1 + lc, vh, idx);
+  <span class="fn">memcpy</span>(pkt->_data + 1 + lc + idx, payload, plen);
+  pkt->_len = 1 + lc + idx + plen;
+}
+
+<span class="kw">void</span> <span class="fn">MQTT_UnPacketPublish</span>(<span class="tp">uint8_t</span> *buf,
+  <span class="tp">char</span> **topic, <span class="tp">uint8_t</span> **payload, <span class="tp">uint16_t</span> *plen,
+  <span class="tp">uint8_t</span> *qos, <span class="tp">uint16_t</span> *pid)
+{
+  <span class="tp">uint8_t</span> cnt; <span class="tp">uint32_t</span> rml = <span class="fn">MQTT_ReadLength</span>(buf + 1, &cnt);
+  <span class="tp">uint16_t</span> idx = 1 + cnt;
+  *qos = (buf[0] >> 1) & 0x03;
+  <span class="tp">uint16_t</span> tl = (buf[idx] << 8) | buf[idx + 1]; idx += 2;
+  *topic = (<span class="tp">char</span> *)(buf + idx); idx += tl;
+  <span class="kw">if</span> (*qos > 0) { *pid = (buf[idx] << 8) | buf[idx + 1]; idx += 2; }
+  *payload = buf + idx;
+  *plen = rml - (idx - (1 + cnt));
+}
+
+<span class="kw">void</span> <span class="fn">MQTT_PacketPublishAck</span>(<span class="tp">MQTT_PACKET_STRUCTURE</span> *pkt, <span class="tp">uint16_t</span> pid)
+{
+  pkt->_data[0] = (MQTT_PUBACK << 4);
+  pkt->_data[1] = 0x02;
+  pkt->_data[2] = (pid >> 8) & 0xFF;
+  pkt->_data[3] = pid & 0xFF;
+  pkt->_len = 4;
+}
+
+<span class="kw">void</span> <span class="fn">MQTT_PacketPing</span>(<span class="tp">MQTT_PACKET_STRUCTURE</span> *pkt)
+{
+  pkt->_data[0] = (MQTT_PINGREQ << 4);  <span class="cm">// 0xC0</span>
+  pkt->_data[1] = 0x00;
+  pkt->_len = 2;
+}</pre>
+</section>
+
+</div><!-- /container -->
+
+</body>
+</html>

@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OLED 显示驱动模块详解 (SSD1306)</title>
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #f0f4f0; color: #2d2d2d; line-height: 1.7; }
+.header { background: linear-gradient(135deg, #004d40, #00695c); color: #fff; padding: 2.5rem 2rem; text-align: center; }
+.header h1 { font-size: 1.8rem; font-weight: 700; letter-spacing: 2px; }
+.header p { margin-top: 0.5rem; opacity: 0.9; font-size: 0.95rem; }
+.nav { position: sticky; top: 0; z-index: 100; background: #1b5e20; display: flex; flex-wrap: wrap; gap: 0.25rem; padding: 0.5rem 1rem; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
+.nav a { color: #e8f5e9; text-decoration: none; padding: 0.4rem 0.9rem; border-radius: 4px; font-size: 0.85rem; transition: background 0.2s; white-space: nowrap; }
+.nav a:hover { background: #2e7d32; }
+.wrapper { max-width: 980px; margin: 1.5rem auto; padding: 0 1rem; }
+.card { background: #fff; border-radius: 10px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); padding: 1.8rem 2rem; margin-bottom: 1.5rem; }
+.card h2 { color: #004d40; font-size: 1.3rem; border-left: 4px solid #2e7d32; padding-left: 0.75rem; margin-bottom: 1rem; }
+.card h3 { color: #1b5e20; font-size: 1.05rem; margin: 1.2rem 0 0.6rem; }
+.card p { margin-bottom: 0.8rem; }
+.tag { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 3px; font-size: 0.78rem; font-weight: 600; margin-right: 0.3rem; }
+.tag-green { background: #c8e6c9; color: #1b5e20; }
+.tag-red { background: #ffcdd2; color: #b71c1c; }
+.tag-blue { background: #bbdefb; color: #0d47a1; }
+.tag-amber { background: #ffe082; color: #e65100; }
+.callout { border-left: 4px solid #f57c00; background: #fff3e0; padding: 0.8rem 1rem; border-radius: 0 6px 6px 0; margin: 1rem 0; font-size: 0.92rem; }
+.callout-green { border-left: 4px solid #2e7d32; background: #e8f5e9; padding: 0.8rem 1rem; border-radius: 0 6px 6px 0; margin: 1rem 0; font-size: 0.92rem; }
+.callout-red { border-left: 4px solid #c62828; background: #ffebee; padding: 0.8rem 1rem; border-radius: 0 6px 6px 0; margin: 1rem 0; font-size: 0.92rem; }
+pre { background: #1e1e2e; color: #cdd6f4; padding: 1rem 1.2rem; border-radius: 8px; overflow-x: auto; font-size: 0.85rem; line-height: 1.55; tab-size: 4; margin: 0.8rem 0; }
+code { font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace; }
+pre code { background: none; padding: 0; }
+.kw  { color: #cba6f7; } .fn  { color: #89b4fa; } .str { color: #a6e3a1; }
+.cm  { color: #6c7086; font-style: italic; } .num { color: #fab387; }
+.tp  { color: #f38ba8; } .mp  { color: #94e2d5; } .op  { color: #89dceb; }
+table { width: 100%; border-collapse: collapse; margin: 0.8rem 0; font-size: 0.9rem; }
+th { background: #2e7d32; color: #fff; padding: 0.55rem 0.8rem; text-align: left; font-weight: 600; }
+td { padding: 0.5rem 0.8rem; border-bottom: 1px solid #e0e0e0; }
+tr:nth-child(even) td { background: #f5faf5; }
+.file-badge { display: inline-block; background: #e8f5e9; color: #1b5e20; border: 1px solid #a5d6a7; border-radius: 4px; padding: 0.2rem 0.6rem; font-size: 0.82rem; font-weight: 600; margin-right: 0.4rem; }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <h1>OLED 显示驱动模块详解 (SSD1306)</h1>
+  <p>文件：<span class="file-badge">APP/bsp_oled.c</span> <span class="file-badge">APP/bsp_oled.h</span> &nbsp;|&nbsp; 基于 STM32 智能浇花系统</p>
+</header>
+
+<nav class="nav">
+  <a href="#overview">模块概述</a>
+  <a href="#hardware">硬件连接</a>
+  <a href="#i2c-timing">软件I2C时序</a>
+  <a href="#cmd-data">命令/数据写入</a>
+  <a href="#buffer">双缓冲机制</a>
+  <a href="#char">字符显示</a>
+  <a href="#init">初始化序列</a>
+  <a href="#refresh">刷新流程</a>
+  <a href="#fullcode">完整代码</a>
+</nav>
+
+<div class="wrapper">
+
+<!-- 1. 模块概述 -->
+<section class="card" id="overview">
+<h2>1. 模块概述</h2>
+
+<p>本模块驱动一颗 <span class="tag tag-green">0.96寸 OLED</span> 显示屏，分辨率为 <strong>128×64</strong> 像素，控制器为 <span class="tag tag-blue">SSD1306</span>。通信接口采用 <strong>软件模拟 I2C</strong>（位冲模式），占用两个 GPIO 引脚：</p>
+
+<div class="callout-green">
+<strong>引脚分配：</strong> PB6 → SCL（时钟线），PB7 → SDA（数据线）
+</div>
+
+<p>模块核心设计亮点：</p>
+<ul style="padding-left:1.5rem; margin-bottom:0.8rem;">
+  <li><strong>双缓冲机制</strong> — 在内存中维护 <code>OLED_GRAM[8][128]</code> 显存缓冲，写入操作先修改缓冲，再通过 <code>OLED_Refresh()</code> 批量刷新到物理屏幕，避免逐点写入造成的闪烁。</li>
+  <li><strong>软件 I2C</strong> — 不依赖 STM32 硬件 I2C 外设，任意两个 GPIO 均可模拟，移植性极强。</li>
+  <li><strong>8×16 像素字库</strong> — 内嵌 ASCII 字符点阵（从空格到大写 Z），覆盖常用可打印字符。</li>
+</ul>
+
+<p>模块对外提供的主要 API：</p>
+<ul style="padding-left:1.5rem; margin-bottom:0;">
+  <li><code>OLED_Init()</code> — 初始化 GPIO 和 OLED 控制器</li>
+  <li><code>OLED_ShowChar(x, y, chr)</code> — 在指定位置显示一个字符</li>
+  <li><code>OLED_Clear()</code> — 清屏（填充 0x00）</li>
+  <li><code>OLED_Refresh()</code> — 将显存缓冲刷新到屏幕</li>
+</ul>
+</section>
+
+<!-- 2. 硬件连接 -->
+<section class="card" id="hardware">
+<h2>2. 硬件连接</h2>
+
+<p>OLED 模块通过 4 根线连接至 STM32 主控：</p>
+
+<table>
+  <tr><th>STM32 引脚</th><th>OLED 模块</th><th>说明</th></tr>
+  <tr><td>PB6</td><td>SCL</td><td>I2C 时钟线</td></tr>
+  <tr><td>PB7</td><td>SDA</td><td>I2C 数据线</td></tr>
+  <tr><td>3.3V</td><td>VCC</td><td>电源正极</td></tr>
+  <tr><td>GND</td><td>GND</td><td>电源地</td></tr>
+</table>
+
+<div class="callout">
+<strong>注意：</strong> SSD1306 的 I2C 地址默认为 <code>0x78</code>（7 位地址 0x3C 左移一位），定义在 <code>bsp_oled.h</code> 第 6 行。如果模块背面 SA0/SDO 引脚拉高，地址可能变为 <code>0x7A</code>。
+</div>
+
+<p>头文件中通过宏定义将 GPIO 操作集中管理，方便移植到其他引脚：</p>
+
+<pre><code><span class="cm">// SCL: PB6, SDA: PB7</span>
+<span class="kw">#define</span> OLED_SCL_GPIO_PORT  <span class="tp">GPIOB</span>
+<span class="kw">#define</span> OLED_SCL_RCC        <span class="tp">RCC_APB2Periph_GPIOB</span>
+<span class="kw">#define</span> OLED_SCL_PIN        <span class="tp">GPIO_Pin_6</span>
+
+<span class="kw">#define</span> OLED_SDA_GPIO_PORT  <span class="tp">GPIOB</span>
+<span class="kw">#define</span> OLED_SDA_RCC        <span class="tp">RCC_APB2Periph_GPIOB</span>
+<span class="kw">#define</span> OLED_SDA_PIN        <span class="tp">GPIO_Pin_7</span>
+
+<span class="kw">#define</span> <span class="fn">OLED_SCL_H</span>  <span class="tp">GPIO_SetBits</span>(OLED_SCL_GPIO_PORT, OLED_SCL_PIN)
+<span class="kw">#define</span> <span class="fn">OLED_SDA_H</span>  <span class="tp">GPIO_SetBits</span>(OLED_SDA_GPIO_PORT, OLED_SDA_PIN)
+<span class="kw">#define</span> <span class="fn">OLED_SCL_L</span>  <span class="tp">GPIO_ResetBits</span>(OLED_SCL_GPIO_PORT, OLED_SCL_PIN)
+<span class="kw">#define</span> <span class="fn">OLED_SDA_L</span>  <span class="tp">GPIO_ResetBits</span>(OLED_SDA_GPIO_PORT, OLED_SDA_PIN)
+
+<span class="kw">#define</span> <span class="fn">OLED_IIC_SDA_READ</span>()  <span class="tp">GPIO_ReadInputDataBit</span>(OLED_SDA_GPIO_PORT, OLED_SDA_PIN)</code></pre>
+</section>
+
+<!-- 3. 软件 I2C 时序 -->
+<section class="card" id="i2c-timing">
+<h2>3. 软件 I2C 时序</h2>
+
+<p>本模块完全通过 GPIO 软件模拟 I2C 协议，不依赖 STM32 硬件 I2C 外设。时序核心是四个基础函数：</p>
+
+<h3>3.1 起始信号 — IIC_Start</h3>
+
+<p>当 SCL 为高电平时，SDA 从高切换到低，表示总线起始条件：</p>
+
+<pre><code><span class="kw">void</span> <span class="fn">IIC_Start</span>(<span class="kw">void</span>)
+{
+    <span class="cm">/* SCL 高电平时, SDA 下降沿 = 启动信号 */</span>
+    <span class="fn">OLED_SDA_H</span>;
+    <span class="fn">OLED_SCL_H</span>;
+    <span class="fn">IIC_Delay</span>();
+    <span class="fn">OLED_SDA_L</span>;
+    <span class="fn">IIC_Delay</span>();
+    <span class="fn">OLED_SCL_L</span>;   <span class="cm">// 钳住总线, 开始传输</span>
+    <span class="fn">IIC_Delay</span>();
+}</code></pre>
+
+<h3>3.2 停止信号 — IIC_Stop</h3>
+
+<p>当 SCL 为高电平时，SDA 从低切换到高，表示总线停止条件：</p>
+
+<pre><code><span class="kw">void</span> <span class="fn">IIC_Stop</span>(<span class="kw">void</span>)
+{
+    <span class="cm">/* SCL 高电平时, SDA 上升沿 = 停止信号 */</span>
+    <span class="fn">OLED_SDA_L</span>;
+    <span class="fn">OLED_SCL_H</span>;
+    <span class="fn">IIC_Delay</span>();
+    <span class="fn">OLED_SDA_H</span>;
+}</code></pre>
+
+<h3>3.3 等待应答 — IIC_WaitAck</h3>
+
+<p>主机释放 SDA，拉高 SCL，检测从机是否将 SDA 拉低（ACK）：</p>
+
+<pre><code><span class="tp">uint8_t</span> <span class="fn">IIC_WaitAck</span>(<span class="kw">void</span>)
+{
+    <span class="tp">uint8_t</span> re;
+    <span class="fn">OLED_SDA_H</span>;     <span class="cm">// CPU 释放 SDA 总线</span>
+    <span class="fn">IIC_Delay</span>();
+    <span class="fn">OLED_SCL_H</span>;     <span class="cm">// 拉高 SCL, 从机输出 ACK</span>
+    <span class="fn">IIC_Delay</span>();
+    <span class="kw">if</span> (<span class="fn">OLED_IIC_SDA_READ</span>()) re = <span class="num">1</span>;  <span class="cm">// NACK</span>
+    <span class="kw">else</span> re = <span class="num">0</span>;                          <span class="cm">// ACK</span>
+    <span class="fn">OLED_SCL_L</span>;
+    <span class="fn">IIC_Delay</span>();
+    <span class="kw">return</span> re;
+}</code></pre>
+
+<h3>3.4 字节写入 — Write_IIC_Byte</h3>
+
+<p>MSB 优先，逐位输出到 SDA 线，每个位在 SCL 上升沿被从机采样：</p>
+
+<pre><code><span class="kw">void</span> <span class="fn">Write_IIC_Byte</span>(<span class="tp">uint8_t</span> _ucByte)
+{
+    <span class="tp">uint8_t</span> i;
+    <span class="kw">for</span> (i = <span class="num">0</span>; i &lt; <span class="num">8</span>; i++)
+    {
+        <span class="kw">if</span> (_ucByte &amp; <span class="num">0x80</span>) <span class="fn">OLED_SDA_H</span>;
+        <span class="kw">else</span>                 <span class="fn">OLED_SDA_L</span>;
+        <span class="fn">IIC_Delay</span>();
+        <span class="fn">OLED_SCL_H</span>;           <span class="cm">// 从机在上升沿采样</span>
+        <span class="fn">IIC_Delay</span>();
+        <span class="fn">OLED_SCL_L</span>;
+        <span class="kw">if</span> (i == <span class="num">7</span>) <span class="fn">OLED_SDA_H</span>; <span class="cm">// 释放总线, 等待 ACK</span>
+        _ucByte &lt;&lt;= <span class="num">1</span>;
+        <span class="fn">IIC_Delay</span>();
+    }
+}</code></pre>
+
+<div class="callout-green">
+<strong>时序要点：</strong> 软件 I2C 的速率由 <code>IIC_Delay()</code> 中的空循环次数控制（当前为 10 次），实测约 100-200 kHz，完全满足 SSD1306 的 I2C 最高速率 400 kHz 要求。
+</div>
+</section>
+
+<!-- 4. 命令/数据写入 -->
+<section class="card" id="cmd-data">
+<h2>4. 命令 / 数据写入</h2>
+
+<p>SSD1306 通过控制字节区分后续字节是命令还是显示数据：</p>
+
+<table>
+  <tr><th>操作</th><th>控制字节</th><th>后续字节</th><th>函数</th></tr>
+  <tr><td>写命令</td><td><code>0x00</code></td><td>命令码</td><td><code>Write_IIC_Command()</code></td></tr>
+  <tr><td>写数据</td><td><code>0x40</code></td><td>像素数据</td><td><code>Write_IIC_Data()</code></td></tr>
+</table>
+
+<h3>Write_IIC_Command</h3>
+<pre><code><span class="kw">void</span> <span class="fn">Write_IIC_Command</span>(<span class="tp">u8</span> IIC_Command)
+{
+    <span class="fn">IIC_Start</span>();
+    <span class="fn">Write_IIC_Byte</span>(OLED_ADDRESS);    <span class="cm">// 0x78 (器件地址 + 写)</span>
+    <span class="fn">IIC_WaitAck</span>();
+    <span class="fn">Write_IIC_Byte</span>(<span class="num">0x00</span>);            <span class="cm">// 控制字节: 后续为命令</span>
+    <span class="fn">IIC_WaitAck</span>();
+    <span class="fn">Write_IIC_Byte</span>(IIC_Command);      <span class="cm">// 命令码</span>
+    <span class="fn">IIC_WaitAck</span>();
+    <span class="fn">IIC_Stop</span>();
+}</code></pre>
+
+<h3>Write_IIC_Data</h3>
+<pre><code><span class="kw">void</span> <span class="fn">Write_IIC_Data</span>(<span class="tp">u8</span> IIC_Data)
+{
+    <span class="fn">IIC_Start</span>();
+    <span class="fn">Write_IIC_Byte</span>(OLED_ADDRESS);    <span class="cm">// 0x78</span>
+    <span class="fn">IIC_WaitAck</span>();
+    <span class="fn">Write_IIC_Byte</span>(<span class="num">0x40</span>);            <span class="cm">// 控制字节: 后续为显示数据</span>
+    <span class="fn">IIC_WaitAck</span>();
+    <span class="fn">Write_IIC_Byte</span>(IIC_Data);         <span class="cm">// 像素数据</span>
+    <span class="fn">IIC_WaitAck</span>();
+    <span class="fn">IIC_Stop</span>();
+}</code></pre>
+
+<div class="callout">
+<strong>关键区别：</strong> 命令写入使用控制字节 <code>0x00</code>，数据写入使用 <code>0x40</code>。SSD1306 根据 D/C# 位（控制字节的 bit-6）决定将接收字节存入命令寄存器还是 GDDRAM。
+</div>
+</section>
+
+<!-- 5. 双缓冲机制 -->
+<section class="card" id="buffer">
+<h2>5. 双缓冲机制</h2>
+
+<p>模块在 STM32 内部维护一个 <strong>1024 字节</strong> 的显存缓冲区：</p>
+
+<pre><code><span class="tp">u8</span> <span class="tp">OLED_GRAM</span>[<span class="num">8</span>][<span class="num">128</span>];  <span class="cm">// 8 页 × 128 列</span></code></pre>
+
+<table>
+  <tr><th>维度</th><th>取值范围</th><th>含义</th></tr>
+  <tr><td>页 (page)</td><td>0 ~ 7</td><td>每页对应 8 个像素行（共 64 行）</td></tr>
+  <tr><td>列 (column)</td><td>0 ~ 127</td><td>每列对应一个像素列</td></tr>
+  <tr><td>每个字节</td><td>0x00 ~ 0xFF</td><td>bit-0 对应页内最上一行, bit-7 对应最下一行</td></tr>
+</table>
+
+<p><strong>工作流程：</strong></p>
+<ol style="padding-left:1.5rem; margin-bottom:0.8rem;">
+  <li>所有绘图操作（<code>OLED_ShowChar</code>、<code>OLED_Fill</code> 等）只修改 <code>OLED_GRAM[][]</code></li>
+  <li>操作完成后调用 <code>OLED_Refresh()</code> 一次性将整个缓冲区刷到屏幕</li>
+  <li>刷新通过 I2C 逐页发送 128 字节数据</li>
+</ol>
+
+<div class="callout-green">
+<strong>优势：</strong> 避免频繁 I2C 通信造成的画面闪烁和 CPU 占用；写缓冲在 RAM 中极快，刷新时才产生总线流量。
+</div>
+</section>
+
+<!-- 6. 字符显示 -->
+<section class="card" id="char">
+<h2>6. 字符显示 — OLED_ShowChar</h2>
+
+<p><code>OLED_ShowChar</code> 是实现文本输出的核心函数。它将一个 ASCII 字符的 8×16 点阵写入显存：</p>
+
+<pre><code><span class="kw">void</span> <span class="fn">OLED_ShowChar</span>(<span class="tp">u8</span> x, <span class="tp">u8</span> y, <span class="tp">u8</span> chr)
+{
+    <span class="tp">u8</span> c, i;
+    c = chr - <span class="str">' '</span>;                    <span class="cm">// 计算字库索引 (空格 = 0)</span>
+    <span class="kw">if</span>(x &gt; <span class="num">127</span>) <span class="kw">return</span>;
+    <span class="kw">if</span>(y &gt; <span class="num">6</span>)   <span class="kw">return</span>;              <span class="cm">// y 是页号, 最多到第 6 页 (留 1 页给下半部分)</span>
+    <span class="kw">for</span>(i = <span class="num">0</span>; i &lt; <span class="num">8</span>; i++)
+    {
+        <span class="kw">if</span>(x + i &lt; <span class="num">128</span>)
+        {
+            <span class="tp">OLED_GRAM</span>[y][x + i]     = <span class="tp">zf</span>[c * <span class="num">16</span> + i];       <span class="cm">// 上半部分 (第 y 页)</span>
+            <span class="tp">OLED_GRAM</span>[y + <span class="num">1</span>][x + i] = <span class="tp">zf</span>[c * <span class="num">16</span> + i + <span class="num">8</span>];   <span class="cm">// 下半部分 (第 y+1 页)</span>
+        }
+    }
+}</code></pre>
+
+<div class="callout">
+<strong>字库布局：</strong> 每个字符占 16 字节。前 8 字节对应上半部分 8 行（写入第 <code>y</code> 页），后 8 字节对应下半部分 8 行（写入第 <code>y+1</code> 页）。一个字库项通过 <code>zf[c * 16 + i]</code> 索引。
+</div>
+
+<p><span class="tag tag-amber">注意</span> <code>y</code> 参数的单位是"页"而非像素行，取值范围 0~6。一个字符垂直占用 2 页（16 像素行），总可用高度为 8 页（64 行）。</p>
+
+</section>
+
+<!-- 7. 初始化序列 -->
+<section class="card" id="init">
+<h2>7. 初始化序列 — OLED_InitController</h2>
+
+<p>SSD1306 上电后需要发送一系列配置命令才能正常工作。<code>OLED_InitController()</code> 按标准初始化序列发送命令：</p>
+
+<pre><code><span class="kw">static</span> <span class="kw">void</span> <span class="fn">OLED_InitController</span>(<span class="kw">void</span>)
+{
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0x00</span>);  <span class="fn">Write_IIC_Command</span>(<span class="num">0x10</span>);  <span class="cm">// 列起始地址低/高字节</span>
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0x40</span>);                                  <span class="cm">// 显示起始行</span>
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xB0</span>);                                  <span class="cm">// 页起始地址</span>
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0x81</span>);  <span class="fn">Write_IIC_Command</span>(<span class="num">0xFF</span>);  <span class="cm">// 对比度: 最大</span>
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xA1</span>);                                  <span class="cm">// 段重映射 (左右翻转)</span>
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xA6</span>);                                  <span class="cm">// 正常显示 (非反色)</span>
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xA8</span>);  <span class="fn">Write_IIC_Command</span>(<span class="num">0x3F</span>);  <span class="cm">// 多路复用比: 64 行</span>
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xC8</span>);                                  <span class="cm">// COM 扫描方向: 从下到上</span>
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xD3</span>);  <span class="fn">Write_IIC_Command</span>(<span class="num">0x00</span>);  <span class="cm">// 显示偏移: 0</span>
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xD5</span>);  <span class="fn">Write_IIC_Command</span>(<span class="num">0x80</span>);  <span class="cm">// 振荡频率</span>
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xD8</span>);  <span class="fn">Write_IIC_Command</span>(<span class="num">0x05</span>);  <span class="cm">// 电荷泵预分频</span>
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xD9</span>);  <span class="fn">Write_IIC_Command</span>(<span class="num">0xF1</span>);  <span class="cm">// 预充电周期</span>
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xDA</span>);  <span class="fn">Write_IIC_Command</span>(<span class="num">0x12</span>);  <span class="cm">// COM 引脚配置</span>
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xDB</span>);  <span class="fn">Write_IIC_Command</span>(<span class="num">0x30</span>);  <span class="cm">// VCOMH 电压</span>
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0x8D</span>);  <span class="fn">Write_IIC_Command</span>(<span class="num">0x14</span>);  <span class="cm">// 使能电荷泵</span>
+}</code></pre>
+
+<table>
+  <tr><th>命令</th><th>参数</th><th>说明</th></tr>
+  <tr><td>0x00 / 0x10</td><td>—</td><td>设置列起始地址为 0</td></tr>
+  <tr><td>0x40</td><td>—</td><td>显示起始行 = 0</td></tr>
+  <tr><td>0xB0</td><td>—</td><td>页起始地址 = 0</td></tr>
+  <tr><td>0x81</td><td>0xFF</td><td>对比度设置（最大亮度）</td></tr>
+  <tr><td>0xA1</td><td>—</td><td>段重映射（左右镜像关闭）</td></tr>
+  <tr><td>0xA6</td><td>—</td><td>正常显示模式（非反白）</td></tr>
+  <tr><td>0xA8</td><td>0x3F</td><td>多路复用比 = 64（128×64 模式）</td></tr>
+  <tr><td>0xC8</td><td>—</td><td>COM 扫描方向：从 COM[N-1] 到 COM0</td></tr>
+  <tr><td>0xD3</td><td>0x00</td><td>显示偏移 = 0</td></tr>
+  <tr><td>0xD5</td><td>0x80</td><td>显示时钟分频 / 振荡频率</td></tr>
+  <tr><td>0xD8</td><td>0x05</td><td>电荷泵预分频 / 复合周期</td></tr>
+  <tr><td>0xD9</td><td>0xF1</td><td>预充电周期</td></tr>
+  <tr><td>0xDA</td><td>0x12</td><td>COM 引脚硬件配置（交替模式）</td></tr>
+  <tr><td>0xDB</td><td>0x30</td><td>VCOMH 电压选择</td></tr>
+  <tr><td>0x8D</td><td>0x14</td><td>使能内部电荷泵（必须！否则无显示）</td></tr>
+</table>
+
+<div class="callout-red">
+<strong>重要：</strong> 命令 <code>0x8D</code> + <code>0x14</code> 用于使能 SSD1306 内部 DC-DC 电荷泵。如果漏掉此命令，OLED 屏幕将不亮。
+</div>
+</section>
+
+<!-- 8. 刷新流程 -->
+<section class="card" id="refresh">
+<h2>8. 刷新流程 — OLED_Refresh</h2>
+
+<p>刷新过程分为三步：</p>
+
+<ol style="padding-left:1.5rem; margin-bottom:0.8rem;">
+  <li>调用 <code>OLED_InitController()</code> 重新发送初始化命令（确保控制器处于已知状态）</li>
+  <li>逐页调用 <code>OLED_FlushPage(page)</code> 发送 128 字节数据</li>
+  <li>发送 <code>0xAF</code> 命令打开显示</li>
+</ol>
+
+<h3>OLED_Refresh</h3>
+<pre><code><span class="kw">void</span> <span class="fn">OLED_Refresh</span>(<span class="kw">void</span>)
+{
+    <span class="tp">u8</span> page;
+    <span class="fn">OLED_InitController</span>();                    <span class="cm">// 重新初始化</span>
+    <span class="kw">for</span>(page = <span class="num">0</span>; page &lt; <span class="num">8</span>; page++)
+        <span class="fn">OLED_FlushPage</span>(page);                   <span class="cm">// 逐页刷新</span>
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xAF</span>);                  <span class="cm">// 打开显示</span>
+}</code></pre>
+
+<h3>OLED_FlushPage — 页缓冲 I2C 突发写入</h3>
+
+<pre><code><span class="kw">static</span> <span class="kw">void</span> <span class="fn">OLED_FlushPage</span>(<span class="tp">u8</span> page)
+{
+    <span class="tp">u8</span> col;
+    <span class="fn">OLED_Set_Pos</span>(<span class="num">0</span>, page);                     <span class="cm">// 定位到目标页</span>
+    <span class="fn">IIC_Start</span>();
+    <span class="fn">Write_IIC_Byte</span>(OLED_ADDRESS);
+    <span class="fn">IIC_WaitAck</span>();
+    <span class="fn">Write_IIC_Byte</span>(<span class="num">0x40</span>);                    <span class="cm">// 数据模式</span>
+    <span class="fn">IIC_WaitAck</span>();
+    <span class="kw">for</span>(col = <span class="num">0</span>; col &lt; <span class="num">128</span>; col++)
+    {
+        <span class="fn">Write_IIC_Byte</span>(<span class="tp">OLED_GRAM</span>[page][col]);  <span class="cm">// 连续发送 128 字节</span>
+        <span class="fn">IIC_WaitAck</span>();
+    }
+    <span class="fn">IIC_Stop</span>();
+}</code></pre>
+
+<h3>OLED_Set_Pos — 设置页和列地址</h3>
+
+<pre><code><span class="kw">void</span> <span class="fn">OLED_Set_Pos</span>(<span class="tp">u8</span> x, <span class="tp">u8</span> y)
+{
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xb0</span> + y);              <span class="cm">// 页地址 (0~7)</span>
+    <span class="fn">Write_IIC_Command</span>(((<span class="tp">x</span> &amp; <span class="num">0xf0</span>) &gt;&gt; <span class="num">4</span>) | <span class="num">0x10</span>);  <span class="cm">// 列地址高 4 位</span>
+    <span class="fn">Write_IIC_Command</span>((<span class="tp">x</span> &amp; <span class="num">0x0f</span>) | <span class="num">0x00</span>);     <span class="cm">// 列地址低 4 位</span>
+}</code></pre>
+
+<div class="callout-green">
+<strong>性能：</strong> 每页通过一次 I2C 起始/停止条件发送 128+ 字节，8 页共 1024+ 字节。在 ~100 kHz 下刷新时间约 100 ms，人眼不会感知到刷屏过程。
+</div>
+</section>
+
+<!-- 9. 完整代码 -->
+<section class="card" id="fullcode">
+<h2>9. 完整代码</h2>
+
+<h3>bsp_oled.h</h3>
+<pre><code><span class="cm">/* bsp_oled.h — OLED 驱动头文件 */</span>
+<span class="kw">#ifndef</span> __BSP_OLED_H
+<span class="kw">#define</span> __BSP_OLED_H
+
+<span class="kw">#include</span> <span class="str">"stm32f10x.h"</span>
+
+<span class="kw">#define</span> OLED_ADDRESS    <span class="num">0x78</span>  <span class="cm">// 默认 I2C 地址</span>
+
+<span class="cm">// GPIO 操作宏</span>
+<span class="kw">#define</span> <span class="fn">OLED_SCL_H</span>  <span class="tp">GPIO_SetBits</span>(OLED_SCL_GPIO_PORT, OLED_SCL_PIN)
+<span class="kw">#define</span> <span class="fn">OLED_SDA_H</span>  <span class="tp">GPIO_SetBits</span>(OLED_SDA_GPIO_PORT, OLED_SDA_PIN)
+<span class="kw">#define</span> <span class="fn">OLED_SCL_L</span>  <span class="tp">GPIO_ResetBits</span>(OLED_SCL_GPIO_PORT, OLED_SCL_PIN)
+<span class="kw">#define</span> <span class="fn">OLED_SDA_L</span>  <span class="tp">GPIO_ResetBits</span>(OLED_SDA_GPIO_PORT, OLED_SDA_PIN)
+
+<span class="cm">// PB6 = SCL, PB7 = SDA</span>
+<span class="kw">#define</span> OLED_SCL_GPIO_PORT  <span class="tp">GPIOB</span>
+<span class="kw">#define</span> OLED_SCL_RCC        <span class="tp">RCC_APB2Periph_GPIOB</span>
+<span class="kw">#define</span> OLED_SCL_PIN        <span class="tp">GPIO_Pin_6</span>
+
+<span class="kw">#define</span> OLED_SDA_GPIO_PORT  <span class="tp">GPIOB</span>
+<span class="kw">#define</span> OLED_SDA_RCC        <span class="tp">RCC_APB2Periph_GPIOB</span>
+<span class="kw">#define</span> OLED_SDA_PIN        <span class="tp">GPIO_Pin_7</span>
+
+<span class="kw">#define</span> <span class="fn">OLED_IIC_SDA_READ</span>()  \
+    <span class="tp">GPIO_ReadInputDataBit</span>(OLED_SDA_GPIO_PORT, OLED_SDA_PIN)
+
+<span class="kw">extern</span> <span class="tp">u8</span> <span class="tp">OLED_GRAM</span>[<span class="num">8</span>][<span class="num">128</span>];
+
+<span class="kw">void</span> <span class="fn">Write_IIC_Command</span>(<span class="tp">u8</span> IIC_Command);
+<span class="kw">void</span> <span class="fn">OLED_Clear</span>(<span class="kw">void</span>);
+<span class="kw">void</span> <span class="fn">OLED_ShowChar</span>(<span class="tp">u8</span> x, <span class="tp">u8</span> y, <span class="tp">u8</span> chr);
+<span class="kw">void</span> <span class="fn">OLED_Init</span>(<span class="kw">void</span>);
+<span class="kw">void</span> <span class="fn">OLED_Refresh</span>(<span class="kw">void</span>);
+
+<span class="kw">#endif</span></code></pre>
+
+<h3>bsp_oled.c</h3>
+<pre><code><span class="cm">/* bsp_oled.c — OLED 驱动实现 */</span>
+<span class="kw">#include</span> <span class="str">"bsp_oled.h"</span>
+<span class="kw">#include</span> <span class="str">"bsp_oledfont.h"</span>
+
+<span class="cm">// GPIO 初始化: PB6 SCL, PB7 SDA, 推挽输出 50 MHz</span>
+<span class="kw">void</span> <span class="fn">IIC_GPIO_Config</span>(<span class="kw">void</span>)
+{
+    <span class="tp">GPIO_InitTypeDef</span> GPIO_InitStructure;
+    <span class="tp">RCC_APB2PeriphClockCmd</span>(OLED_SCL_RCC | OLED_SDA_RCC, <span class="tp">ENABLE</span>);
+
+    GPIO_InitStructure.GPIO_Pin   = OLED_SCL_PIN;
+    GPIO_InitStructure.GPIO_Speed = <span class="tp">GPIO_Speed_50MHz</span>;
+    GPIO_InitStructure.GPIO_Mode  = <span class="tp">GPIO_Mode_Out_PP</span>;
+    <span class="tp">GPIO_Init</span>(OLED_SCL_GPIO_PORT, &amp;GPIO_InitStructure);
+
+    GPIO_InitStructure.GPIO_Pin   = OLED_SDA_PIN;
+    <span class="tp">GPIO_Init</span>(OLED_SDA_GPIO_PORT, &amp;GPIO_InitStructure);
+
+    <span class="fn">IIC_Stop</span>();  <span class="cm">// 总线复位</span>
+}
+
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">IIC_Delay</span>(<span class="kw">void</span>)
+{
+    <span class="tp">uint8_t</span> i;
+    <span class="kw">for</span> (i = <span class="num">0</span>; i &lt; <span class="num">10</span>; i++);
+}
+
+<span class="cm">// I2C 起始: SCL 高时 SDA 下降沿</span>
+<span class="kw">void</span> <span class="fn">IIC_Start</span>(<span class="kw">void</span>)
+{
+    <span class="fn">OLED_SDA_H</span>; <span class="fn">OLED_SCL_H</span>; <span class="fn">IIC_Delay</span>();
+    <span class="fn">OLED_SDA_L</span>; <span class="fn">IIC_Delay</span>();
+    <span class="fn">OLED_SCL_L</span>; <span class="fn">IIC_Delay</span>();
+}
+
+<span class="cm">// I2C 停止: SCL 高时 SDA 上升沿</span>
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">IIC_Stop</span>(<span class="kw">void</span>)
+{
+    <span class="fn">OLED_SDA_L</span>; <span class="fn">OLED_SCL_H</span>; <span class="fn">IIC_Delay</span>();
+    <span class="fn">OLED_SDA_H</span>;
+}
+
+<span class="cm">// 等待从机 ACK: 返回 0=应答, 1=无应答</span>
+<span class="tp">uint8_t</span> <span class="fn">IIC_WaitAck</span>(<span class="kw">void</span>)
+{
+    <span class="tp">uint8_t</span> re;
+    <span class="fn">OLED_SDA_H</span>; <span class="fn">IIC_Delay</span>();
+    <span class="fn">OLED_SCL_H</span>; <span class="fn">IIC_Delay</span>();
+    <span class="kw">if</span> (<span class="fn">OLED_IIC_SDA_READ</span>()) re = <span class="num">1</span>;
+    <span class="kw">else</span>                       re = <span class="num">0</span>;
+    <span class="fn">OLED_SCL_L</span>; <span class="fn">IIC_Delay</span>();
+    <span class="kw">return</span> re;
+}
+
+<span class="cm">// I2C 写入一个字节 (MSB first)</span>
+<span class="kw">void</span> <span class="fn">Write_IIC_Byte</span>(<span class="tp">uint8_t</span> _ucByte)
+{
+    <span class="tp">uint8_t</span> i;
+    <span class="kw">for</span> (i = <span class="num">0</span>; i &lt; <span class="num">8</span>; i++)
+    {
+        <span class="kw">if</span> (_ucByte &amp; <span class="num">0x80</span>) <span class="fn">OLED_SDA_H</span>;
+        <span class="kw">else</span>                 <span class="fn">OLED_SDA_L</span>;
+        <span class="fn">IIC_Delay</span>(); <span class="fn">OLED_SCL_H</span>; <span class="fn">IIC_Delay</span>();
+        <span class="fn">OLED_SCL_L</span>;
+        <span class="kw">if</span> (i == <span class="num">7</span>) <span class="fn">OLED_SDA_H</span>;
+        _ucByte &lt;&lt;= <span class="num">1</span>; <span class="fn">IIC_Delay</span>();
+    }
+}
+
+<span class="cm">// 写命令: 控制字节 = 0x00</span>
+<span class="kw">void</span> <span class="fn">Write_IIC_Command</span>(<span class="tp">u8</span> IIC_Command)
+{
+    <span class="fn">IIC_Start</span>();
+    <span class="fn">Write_IIC_Byte</span>(OLED_ADDRESS); <span class="fn">IIC_WaitAck</span>();
+    <span class="fn">Write_IIC_Byte</span>(<span class="num">0x00</span>);         <span class="fn">IIC_WaitAck</span>();
+    <span class="fn">Write_IIC_Byte</span>(IIC_Command);  <span class="fn">IIC_WaitAck</span>();
+    <span class="fn">IIC_Stop</span>();
+}
+
+<span class="cm">// 写数据: 控制字节 = 0x40</span>
+<span class="kw">void</span> <span class="fn">Write_IIC_Data</span>(<span class="tp">u8</span> IIC_Data)
+{
+    <span class="fn">IIC_Start</span>();
+    <span class="fn">Write_IIC_Byte</span>(OLED_ADDRESS); <span class="fn">IIC_WaitAck</span>();
+    <span class="fn">Write_IIC_Byte</span>(<span class="num">0x40</span>);         <span class="fn">IIC_WaitAck</span>();
+    <span class="fn">Write_IIC_Byte</span>(IIC_Data);     <span class="fn">IIC_WaitAck</span>();
+    <span class="fn">IIC_Stop</span>();
+}
+
+<span class="tp">u8</span> <span class="tp">OLED_GRAM</span>[<span class="num">8</span>][<span class="num">128</span>];  <span class="cm">// 显存缓冲: 8 页 x 128 列</span>
+
+<span class="cm">// 设置光标位置 (页/列)</span>
+<span class="kw">void</span> <span class="fn">OLED_Set_Pos</span>(<span class="tp">u8</span> x, <span class="tp">u8</span> y)
+{
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xb0</span> + y);
+    <span class="fn">Write_IIC_Command</span>(((<span class="tp">x</span> &amp; <span class="num">0xf0</span>) &gt;&gt; <span class="num">4</span>) | <span class="num">0x10</span>);
+    <span class="fn">Write_IIC_Command</span>((<span class="tp">x</span> &amp; <span class="num">0x0f</span>) | <span class="num">0x00</span>);
+}
+
+<span class="cm">// 全屏填充</span>
+<span class="kw">void</span> <span class="fn">OLED_Fill</span>(<span class="tp">u8</span> fill_Data)
+{
+    <span class="tp">u8</span> m, n;
+    <span class="kw">for</span>(m = <span class="num">0</span>; m &lt; <span class="num">8</span>; m++)
+        <span class="kw">for</span>(n = <span class="num">0</span>; n &lt; <span class="num">128</span>; n++)
+            <span class="tp">OLED_GRAM</span>[m][n] = fill_Data;
+}
+
+<span class="kw">void</span> <span class="fn">OLED_Clear</span>(<span class="kw">void</span>) { <span class="fn">OLED_Fill</span>(<span class="num">0x00</span>); }
+
+<span class="cm">// 显示一个 8x16 字符</span>
+<span class="kw">void</span> <span class="fn">OLED_ShowChar</span>(<span class="tp">u8</span> x, <span class="tp">u8</span> y, <span class="tp">u8</span> chr)
+{
+    <span class="tp">u8</span> c, i;
+    c = chr - <span class="str">' '</span>;
+    <span class="kw">if</span>(x &gt; <span class="num">127</span>) <span class="kw">return</span>;
+    <span class="kw">if</span>(y &gt; <span class="num">6</span>)   <span class="kw">return</span>;
+    <span class="kw">for</span>(i = <span class="num">0</span>; i &lt; <span class="num">8</span>; i++)
+    {
+        <span class="kw">if</span>(x + i &lt; <span class="num">128</span>)
+        {
+            <span class="tp">OLED_GRAM</span>[y][x + i]     = <span class="tp">zf</span>[c * <span class="num">16</span> + i];
+            <span class="tp">OLED_GRAM</span>[y + <span class="num">1</span>][x + i] = <span class="tp">zf</span>[c * <span class="num">16</span> + i + <span class="num">8</span>];
+        }
+    }
+}
+
+<span class="cm">// SSD1306 初始化命令序列</span>
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">OLED_InitController</span>(<span class="kw">void</span>)
+{
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0x00</span>); <span class="fn">Write_IIC_Command</span>(<span class="num">0x10</span>);
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0x40</span>); <span class="fn">Write_IIC_Command</span>(<span class="num">0xB0</span>);
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0x81</span>); <span class="fn">Write_IIC_Command</span>(<span class="num">0xFF</span>);
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xA1</span>); <span class="fn">Write_IIC_Command</span>(<span class="num">0xA6</span>);
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xA8</span>); <span class="fn">Write_IIC_Command</span>(<span class="num">0x3F</span>);
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xC8</span>); <span class="fn">Write_IIC_Command</span>(<span class="num">0xD3</span>);
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0x00</span>); <span class="fn">Write_IIC_Command</span>(<span class="num">0xD5</span>);
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0x80</span>); <span class="fn">Write_IIC_Command</span>(<span class="num">0xD8</span>);
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0x05</span>); <span class="fn">Write_IIC_Command</span>(<span class="num">0xD9</span>);
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xF1</span>); <span class="fn">Write_IIC_Command</span>(<span class="num">0xDA</span>);
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0x12</span>); <span class="fn">Write_IIC_Command</span>(<span class="num">0xDB</span>);
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0x30</span>); <span class="fn">Write_IIC_Command</span>(<span class="num">0x8D</span>);
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0x14</span>);
+}
+
+<span class="cm">// 刷新单页到 SSD1306</span>
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">OLED_FlushPage</span>(<span class="tp">u8</span> page)
+{
+    <span class="tp">u8</span> col;
+    <span class="fn">OLED_Set_Pos</span>(<span class="num">0</span>, page);
+    <span class="fn">IIC_Start</span>();
+    <span class="fn">Write_IIC_Byte</span>(OLED_ADDRESS); <span class="fn">IIC_WaitAck</span>();
+    <span class="fn">Write_IIC_Byte</span>(<span class="num">0x40</span>);         <span class="fn">IIC_WaitAck</span>();
+    <span class="kw">for</span>(col = <span class="num">0</span>; col &lt; <span class="num">128</span>; col++)
+    {
+        <span class="fn">Write_IIC_Byte</span>(<span class="tp">OLED_GRAM</span>[page][col]);
+        <span class="fn">IIC_WaitAck</span>();
+    }
+    <span class="fn">IIC_Stop</span>();
+}
+
+<span class="cm">// 刷新整屏: 初始化 → 逐页刷 → 开显示</span>
+<span class="kw">void</span> <span class="fn">OLED_Refresh</span>(<span class="kw">void</span>)
+{
+    <span class="tp">u8</span> page;
+    <span class="fn">OLED_InitController</span>();
+    <span class="kw">for</span>(page = <span class="num">0</span>; page &lt; <span class="num">8</span>; page++)
+        <span class="fn">OLED_FlushPage</span>(page);
+    <span class="fn">Write_IIC_Command</span>(<span class="num">0xAF</span>);  <span class="cm">// Display ON</span>
+}
+
+<span class="cm">// OLED 初始化入口: GPIO → 清屏 → 刷新</span>
+<span class="kw">void</span> <span class="fn">OLED_Init</span>(<span class="kw">void</span>)
+{
+    <span class="fn">IIC_GPIO_Config</span>();
+    <span class="fn">OLED_Clear</span>();
+    <span class="fn">OLED_Refresh</span>();
+}</code></pre>
+</section>
+
+</div>
+</body>
+</html>

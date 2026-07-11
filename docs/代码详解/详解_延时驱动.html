@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SysTick 微秒/毫秒延时模块详解</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; background: #e8f5e9; color: #1b5e20; line-height: 1.8; }
+header {
+  background: linear-gradient(135deg, #004d40, #00695c);
+  color: #fff; text-align: center; padding: 48px 20px 36px;
+}
+header h1 { font-size: 2rem; letter-spacing: 2px; margin-bottom: 6px; }
+header p { font-size: 0.95rem; opacity: .85; }
+nav {
+  position: sticky; top: 0; z-index: 100;
+  background: #1b5e20; padding: 10px 0; text-align: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,.3);
+}
+nav a {
+  color: #a5d6a7; text-decoration: none; margin: 0 14px;
+  font-size: 0.95rem; font-weight: 600; transition: color .2s;
+}
+nav a:hover { color: #fff; }
+.container { max-width: 960px; margin: 0 auto; padding: 30px 20px 60px; }
+.card {
+  background: #fff; border-radius: 10px; padding: 28px 32px;
+  margin-bottom: 28px; box-shadow: 0 2px 12px rgba(0,77,64,.10);
+  border-left: 4px solid #00695c;
+}
+.card h2 {
+  font-size: 1.35rem; color: #004d40; margin-bottom: 16px;
+  padding-bottom: 8px; border-bottom: 2px solid #c8e6c9;
+}
+.card h3 { font-size: 1.05rem; color: #00695c; margin: 18px 0 10px; }
+.card p { margin: 8px 0; }
+pre {
+  background: #1e1e2e; color: #cdd6f4; border-radius: 8px;
+  padding: 16px 20px; font-size: 0.85rem; font-family: 'JetBrains Mono','Fira Code','Consolas',monospace;
+  overflow-x: auto; margin: 12px 0; tab-size: 4;
+}
+pre .kw { color: #89b4fa; } pre .fn { color: #a6e3a1; }
+pre .str { color: #f9e2af; } pre .cm { color: #6c7086; font-style: italic; }
+pre .num { color: #fab387; } pre .tp { color: #94e2d5; }
+pre .mp { color: #cba6f7; } pre .op { color: #89dceb; }
+.callout {
+  border-radius: 8px; padding: 14px 18px; margin: 14px 0;
+  font-size: 0.93rem;
+}
+.callout-info { background: #e3f2fd; border-left: 4px solid #1976d2; color: #0d47a1; }
+.callout-success { background: #e8f5e9; border-left: 4px solid #2e7d32; color: #1b5e20; }
+.callout-warning { background: #fff3e0; border-left: 4px solid #e65100; color: #bf360c; }
+table {
+  width: 100%; border-collapse: collapse; margin: 12px 0;
+  font-size: 0.9rem;
+}
+th { background: #004d40; color: #fff; padding: 10px 14px; text-align: left; }
+td { padding: 9px 14px; border-bottom: 1px solid #c8e6c9; }
+tr:nth-child(even) td { background: #f1f8e9; }
+kbd {
+  background: #1b5e20; color: #fff; padding: 2px 8px;
+  border-radius: 4px; font-size: 0.8rem; font-family: inherit;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>SysTick 微秒/毫秒延时模块详解</h1>
+  <p>BSP/bsp_delay.c + BSP/bsp_delay.h &nbsp;|&nbsp; STM32F103 智能浇花系统</p>
+</header>
+
+<nav>
+  <a href="详解_ADC采集.html">ADC 采集</a>
+  <a href="详解_按键驱动.html">按键驱动</a>
+  <a href="详解_延时驱动.html">延时驱动</a>
+</nav>
+
+<div class="container">
+
+<!-- ========== 1. 模块概述 ========== -->
+<div class="card">
+<h2>1. 模块概述</h2>
+<p>本模块基于 <strong>SysTick</strong>（系统滴答定时器）实现精确的微秒级和毫秒级延时，采用<strong>轮询 COUNTFLAG</strong> 的方式完成延时等待。</p>
+
+<div class="callout callout-info">
+<strong>时钟配置：</strong> SysTick 时钟源选择 <strong>HCLK/8</strong>，即 <code>72 MHz &divide; 8 = 9 MHz</code>，每个计数周期 = <strong>1/9 &mu;s &asymp; 0.111 &mu;s</strong>。
+</div>
+
+<table>
+  <tr><th>参数</th><th>值</th><th>说明</th></tr>
+  <tr><td>HCLK 主频</td><td>72 MHz</td><td>SYSCLK = HCLK = 72 MHz</td></tr>
+  <tr><td>SysTick 时钟</td><td>9 MHz</td><td>72 MHz / 8</td></tr>
+  <tr><td>计数周期</td><td>~111 ns</td><td>1 / 9 MHz</td></tr>
+  <tr><td>UsCount</td><td>9</td><td>1 &mu;s 所需的计数次数</td></tr>
+  <tr><td>MsCount</td><td>9000</td><td>UsCount &times; 1000</td></tr>
+  <tr><td>最大微秒延时</td><td>~798,915 &mu;s</td><td>24 位计数器上限</td></tr>
+</table>
+</div>
+
+<!-- ========== 2. 延时初始化 ========== -->
+<div class="card">
+<h2>2. 延时初始化 &mdash; Delay_Init</h2>
+<p>配置 SysTick 定时器的时钟源并计算延时系数。</p>
+
+<pre><span class="kw">void</span> <span class="fn">Delay_Init</span>(<span class="kw">void</span>)
+{
+    <span class="cm">// 选择时钟源为 HCLK/8 (CTRL 寄存器的 bit2 清零)</span>
+    SysTick-&gt;<span class="mp">CTRL</span> &amp;= ~(<span class="num">1</span> &lt;&lt; <span class="num">2</span>);
+
+    <span class="cm">// 1 us 需要的计数次数：9 MHz / 1,000,000 = 9</span>
+    <span class="mp">UsCount</span> = <span class="num">9</span>;
+
+    <span class="cm">// 1 ms 需要的计数次数：9 * 1000 = 9000</span>
+    <span class="mp">MsCount</span> = <span class="mp">UsCount</span> * <span class="num">1000</span>;
+}</pre>
+
+<div class="callout callout-success">
+<strong>系数推导：</strong> SysTick 时钟 9 MHz，每秒计数 9,000,000 次。1 &mu;s = 9,000,000 / 1,000,000 = 9 次。毫秒系数 = 9 &times; 1000 = 9000。
+</div>
+</div>
+
+<!-- ========== 3. 微秒延时 ========== -->
+<div class="card">
+<h2>3. 微秒延时 &mdash; DelayUs</h2>
+<p>实现 1 ~ 798,915 微秒的精确延时。</p>
+
+<pre><span class="kw">void</span> <span class="fn">DelayUs</span>(<span class="kw">unsigned short</span> us)
+{
+    <span class="kw">unsigned int</span> ctrlResult = <span class="num">0</span>;
+
+    us &amp;= <span class="num">0x00FFFFFF</span>;                           <span class="cm">// 仅取低 24 位（计数器宽度）</span>
+
+    SysTick-&gt;<span class="mp">LOAD</span> = us * <span class="mp">UsCount</span>;               <span class="cm">// 设置重装载值</span>
+    SysTick-&gt;<span class="mp">VAL</span>  = <span class="num">0</span>;                             <span class="cm">// 清零当前计数值</span>
+    SysTick-&gt;<span class="mp">CTRL</span> = <span class="num">1</span>;                             <span class="cm">// 使能计数器（ENABLE=1）</span>
+
+    <span class="kw">do</span> {
+        ctrlResult = SysTick-&gt;<span class="mp">CTRL</span>;                <span class="cm">// 读取控制寄存器</span>
+    } <span class="kw">while</span> ((ctrlResult &amp; <span class="num">0x01</span>) &amp;&amp; !(ctrlResult &amp; (<span class="num">1</span> &lt;&lt; <span class="num">16</span>)));
+    <span class="cm">// 条件：计数器使能位为 1 且 COUNTFLAG 尚未置位</span>
+
+    SysTick-&gt;<span class="mp">CTRL</span> = <span class="num">0</span>;                             <span class="cm">// 关闭计数器</span>
+    SysTick-&gt;<span class="mp">VAL</span>  = <span class="num">0</span>;                             <span class="cm">// 清零计数值</span>
+}</pre>
+
+<div class="callout callout-warning">
+<strong>注意：</strong> 参数 <code>us</code> 被截断为 24 位，最大支持约 798,915 &mu;s（约 798 ms）。若需更长的延时请调用 <code>DelayXms</code>。
+</div>
+</div>
+
+<!-- ========== 4. 毫秒延时 ========== -->
+<div class="card">
+<h2>4. 毫秒延时 &mdash; DelayXms</h2>
+<p>实质是对微秒延时的"放大"版，使用 <code>MsCount = UsCount &times; 1000</code> 直接装载毫秒计算值，原理与 DelayUs 相同。</p>
+
+<pre><span class="kw">void</span> <span class="fn">DelayXms</span>(<span class="kw">unsigned short</span> ms)
+{
+    <span class="kw">unsigned int</span> ctrlResult = <span class="num">0</span>;
+
+    <span class="kw">if</span> (ms == <span class="num">0</span>) <span class="kw">return</span>;                        <span class="cm">// 参数保护</span>
+
+    ms &amp;= <span class="num">0x00FFFFFF</span>;                             <span class="cm">// 取低 24 位</span>
+
+    SysTick-&gt;<span class="mp">LOAD</span> = ms * <span class="mp">MsCount</span>;                <span class="cm">// 装载毫秒计数值</span>
+    SysTick-&gt;<span class="mp">VAL</span>  = <span class="num">0</span>;
+    SysTick-&gt;<span class="mp">CTRL</span> = <span class="num">1</span>;                             <span class="cm">// 使能计数器</span>
+
+    <span class="kw">do</span> {
+        ctrlResult = SysTick-&gt;<span class="mp">CTRL</span>;
+    } <span class="kw">while</span> ((ctrlResult &amp; <span class="num">0x01</span>) &amp;&amp; !(ctrlResult &amp; (<span class="num">1</span> &lt;&lt; <span class="num">16</span>)));
+
+    SysTick-&gt;<span class="mp">CTRL</span> = <span class="num">0</span>;
+    SysTick-&gt;<span class="mp">VAL</span>  = <span class="num">0</span>;
+}</pre>
+</div>
+
+<!-- ========== 5. 工作原理 ========== -->
+<div class="card">
+<h2>5. 工作原理</h2>
+
+<p>SysTick 是 Cortex-M3 内核内置的 24 位递减计数器，以下时序图说明一次延时的工作流程：</p>
+
+<div class="callout callout-info">
+<strong>1.</strong> 设置 <code>LOAD = us &times; UsCount</code>（例如延时 10 &mu;s &rArr; LOAD = 10 &times; 9 = 90）<br>
+<strong>2.</strong> 写 <code>VAL = 0</code> 清零当前计数值<br>
+<strong>3.</strong> 写 <code>CTRL = 1</code> 使能计数器，SysTick 从 LOAD 开始递减<br>
+<strong>4.</strong> 每经过 1 个时钟周期（~111 ns），VAL 减 1<br>
+<strong>5.</strong> 当 VAL 递减至 0 时，硬件自动将 COUNTFLAG（CTRL 的 bit 16）置 1<br>
+<strong>6.</strong> 软件轮询等待 COUNTFLAG 为 1<br>
+<strong>7.</strong> 写 <code>CTRL = 0</code> 关闭计数器，写 <code>VAL = 0</code> 清理，完成延时
+</div>
+
+<pre><span class="cm">// 寄存器操作拆解</span>
+SysTick-&gt;<span class="mp">CTRL</span>     <span class="cm">// 0xE000E010  控制寄存器</span>
+  <span class="cm">// bit 0: ENABLE     — 1=使能, 0=关闭</span>
+  <span class="cm">// bit 1: TICKINT    — 中断使能（本模块不使用）</span>
+  <span class="cm">// bit 2: CLKSOURCE  — 0=HCLK/8, 1=HCLK</span>
+  <span class="cm">// bit 16: COUNTFLAG — 只读, 计数到 0 时硬件置 1</span>
+
+SysTick-&gt;<span class="mp">LOAD</span>      <span class="cm">// 0xE000E014  重装载值寄存器（24 位有效）</span>
+SysTick-&gt;<span class="mp">VAL</span>       <span class="cm">// 0xE000E018  当前计数值寄存器</span></pre>
+
+<table>
+  <tr><th>寄存器</th><th>地址</th><th>本模块操作</th></tr>
+  <tr><td><code>CTRL</code></td><td>0xE000E010</td><td>初始化清 bit 2；使能时写 1；轮询 bit 16；结束后写 0</td></tr>
+  <tr><td><code>LOAD</code></td><td>0xE000E014</td><td>写入 <code>us &times; UsCount</code> 或 <code>ms &times; MsCount</code></td></tr>
+  <tr><td><code>VAL</code></td><td>0xE000E018</td><td>启动前写 0，结束后写 0</td></tr>
+</table>
+
+<div class="callout callout-success">
+<strong>为什么不用中断？</strong> 本模块采用<strong>轮询模式</strong>而非 SysTick 中断，因为延时场景下 CPU 本身就需要等待，无需中断介入。这也避免了中断抢占导致的延时误差。轮询同时检查 <code>CTRL &amp; 0x01</code> 确保计数器仍在运行状态，防止因意外关闭导致死循环。
+</div>
+</div>
+
+<!-- ========== 6. 完整代码 ========== -->
+<div class="card">
+<h2>6. 完整代码</h2>
+
+<h3>bsp_delay.h</h3>
+<pre><span class="kw">#ifndef</span> BSP_DELAY_H
+<span class="kw">#define</span> BSP_DELAY_H
+
+<span class="kw">#include</span> <span class="str">"stm32f10x.h"</span>
+
+<span class="kw">void</span> <span class="fn">Delay_Init</span>(<span class="kw">void</span>);
+<span class="kw">void</span> <span class="fn">DelayUs</span>(<span class="kw">unsigned short</span> us);
+<span class="kw">void</span> <span class="fn">DelayXms</span>(<span class="kw">unsigned short</span> ms);
+
+<span class="kw">#endif</span></pre>
+
+<h3>bsp_delay.c</h3>
+<pre><span class="kw">#include</span> <span class="str">"bsp_delay.h"</span>
+
+<span class="kw">static unsigned char</span>  <span class="mp">UsCount</span> = <span class="num">0</span>;
+<span class="kw">static unsigned short</span> <span class="mp">MsCount</span> = <span class="num">0</span>;
+
+<span class="cm">/**
+  * @brief  SysTick 初始化
+  * @param  无
+  * @retval 无
+  */</span>
+<span class="kw">void</span> <span class="fn">Delay_Init</span>(<span class="kw">void</span>)
+{
+    <span class="cm">// 选择时钟 HCLK/8 (72MHz/8=9MHz)</span>
+    SysTick-&gt;<span class="mp">CTRL</span> &amp;= ~(<span class="num">1</span> &lt;&lt; <span class="num">2</span>);
+
+    <span class="mp">UsCount</span> = <span class="num">9</span>;         <span class="cm">// 1us 需要 9 个计数</span>
+    <span class="mp">MsCount</span> = <span class="mp">UsCount</span> * <span class="num">1000</span>;  <span class="cm">// 1ms 需要 9000 个计数</span>
+}
+
+<span class="cm">/**
+  * @brief  微秒级延时
+  * @param  us：延时微秒数（最大约 798,915 us）
+  * @retval 无
+  */</span>
+<span class="kw">void</span> <span class="fn">DelayUs</span>(<span class="kw">unsigned short</span> us)
+{
+    <span class="kw">unsigned int</span> ctrlResult = <span class="num">0</span>;
+
+    us &amp;= <span class="num">0x00FFFFFF</span>;
+
+    SysTick-&gt;<span class="mp">LOAD</span> = us * <span class="mp">UsCount</span>;
+    SysTick-&gt;<span class="mp">VAL</span>  = <span class="num">0</span>;
+    SysTick-&gt;<span class="mp">CTRL</span> = <span class="num">1</span>;
+
+    <span class="kw">do</span> {
+        ctrlResult = SysTick-&gt;<span class="mp">CTRL</span>;
+    } <span class="kw">while</span> ((ctrlResult &amp; <span class="num">0x01</span>) &amp;&amp; !(ctrlResult &amp; (<span class="num">1</span> &lt;&lt; <span class="num">16</span>)));
+
+    SysTick-&gt;<span class="mp">CTRL</span> = <span class="num">0</span>;
+    SysTick-&gt;<span class="mp">VAL</span>  = <span class="num">0</span>;
+}
+
+<span class="cm">/**
+  * @brief  毫秒级延时
+  * @param  ms：延时毫秒数
+  * @retval 无
+  */</span>
+<span class="kw">void</span> <span class="fn">DelayXms</span>(<span class="kw">unsigned short</span> ms)
+{
+    <span class="kw">unsigned int</span> ctrlResult = <span class="num">0</span>;
+
+    <span class="kw">if</span> (ms == <span class="num">0</span>) <span class="kw">return</span>;
+
+    ms &amp;= <span class="num">0x00FFFFFF</span>;
+
+    SysTick-&gt;<span class="mp">LOAD</span> = ms * <span class="mp">MsCount</span>;
+    SysTick-&gt;<span class="mp">VAL</span>  = <span class="num">0</span>;
+    SysTick-&gt;<span class="mp">CTRL</span> = <span class="num">1</span>;
+
+    <span class="kw">do</span> {
+        ctrlResult = SysTick-&gt;<span class="mp">CTRL</span>;
+    } <span class="kw">while</span> ((ctrlResult &amp; <span class="num">0x01</span>) &amp;&amp; !(ctrlResult &amp; (<span class="num">1</span> &lt;&lt; <span class="num">16</span>)));
+
+    SysTick-&gt;<span class="mp">CTRL</span> = <span class="num">0</span>;
+    SysTick-&gt;<span class="mp">VAL</span>  = <span class="num">0</span>;
+}</pre>
+</div>
+
+</div>
+</body>
+</html>

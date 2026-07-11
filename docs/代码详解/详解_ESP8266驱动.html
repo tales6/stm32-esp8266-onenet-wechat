@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ESP8266 WiFi 驱动模块详解</title>
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #f0f4f0; color: #2d2d2d; line-height: 1.7; }
+.header { background: linear-gradient(135deg, #004d40, #00695c); color: #fff; padding: 2.5rem 2rem; text-align: center; }
+.header h1 { font-size: 1.8rem; font-weight: 700; letter-spacing: 2px; }
+.header p { margin-top: 0.5rem; opacity: 0.9; font-size: 0.95rem; }
+.nav { position: sticky; top: 0; z-index: 100; background: #1b5e20; display: flex; flex-wrap: wrap; gap: 0.25rem; padding: 0.5rem 1rem; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
+.nav a { color: #e8f5e9; text-decoration: none; padding: 0.4rem 0.9rem; border-radius: 4px; font-size: 0.85rem; transition: background 0.2s; white-space: nowrap; }
+.nav a:hover { background: #2e7d32; }
+.wrapper { max-width: 980px; margin: 1.5rem auto; padding: 0 1rem; }
+.card { background: #fff; border-radius: 10px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); padding: 1.8rem 2rem; margin-bottom: 1.5rem; }
+.card h2 { color: #004d40; font-size: 1.3rem; border-left: 4px solid #2e7d32; padding-left: 0.75rem; margin-bottom: 1rem; }
+.card h3 { color: #1b5e20; font-size: 1.05rem; margin: 1.2rem 0 0.6rem; }
+.card p { margin-bottom: 0.8rem; }
+.tag { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 3px; font-size: 0.78rem; font-weight: 600; margin-right: 0.3rem; }
+.tag-green { background: #c8e6c9; color: #1b5e20; }
+.tag-red { background: #ffcdd2; color: #b71c1c; }
+.tag-blue { background: #bbdefb; color: #0d47a1; }
+.tag-amber { background: #ffe082; color: #e65100; }
+.callout { border-left: 4px solid #f57c00; background: #fff3e0; padding: 0.8rem 1rem; border-radius: 0 6px 6px 0; margin: 1rem 0; font-size: 0.92rem; }
+.callout-green { border-left: 4px solid #2e7d32; background: #e8f5e9; padding: 0.8rem 1rem; border-radius: 0 6px 6px 0; margin: 1rem 0; font-size: 0.92rem; }
+.callout-red { border-left: 4px solid #c62828; background: #ffebee; padding: 0.8rem 1rem; border-radius: 0 6px 6px 0; margin: 1rem 0; font-size: 0.92rem; }
+pre { background: #1e1e2e; color: #cdd6f4; padding: 1rem 1.2rem; border-radius: 8px; overflow-x: auto; font-size: 0.85rem; line-height: 1.55; tab-size: 4; margin: 0.8rem 0; }
+code { font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace; }
+pre code { background: none; padding: 0; }
+.kw  { color: #cba6f7; } .fn  { color: #89b4fa; } .str { color: #a6e3a1; }
+.cm  { color: #6c7086; font-style: italic; } .num { color: #fab387; }
+.tp  { color: #f38ba8; } .mp  { color: #94e2d5; } .op  { color: #89dceb; }
+table { width: 100%; border-collapse: collapse; margin: 0.8rem 0; font-size: 0.9rem; }
+th { background: #2e7d32; color: #fff; padding: 0.55rem 0.8rem; text-align: left; font-weight: 600; }
+td { padding: 0.5rem 0.8rem; border-bottom: 1px solid #e0e0e0; }
+tr:nth-child(even) td { background: #f5faf5; }
+.file-badge { display: inline-block; background: #e8f5e9; color: #1b5e20; border: 1px solid #a5d6a7; border-radius: 4px; padding: 0.2rem 0.6rem; font-size: 0.82rem; font-weight: 600; margin-right: 0.4rem; }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <h1>ESP8266 WiFi 驱动模块详解</h1>
+  <p>文件：<span class="file-badge">Onenet/esp8266.c</span> <span class="file-badge">Onenet/esp8266.h</span> &nbsp;|&nbsp; 基于 STM32 智能浇花系统</p>
+</header>
+
+<nav class="nav">
+  <a href="#overview">模块概述</a>
+  <a href="#hardware">硬件连接</a>
+  <a href="#usart">USART1 中断接收</a>
+  <a href="#sendcmd">AT指令发送与响应等待</a>
+  <a href="#init">初始化流程</a>
+  <a href="#senddata">数据发送</a>
+  <a href="#recvdata">数据接收</a>
+  <a href="#ringbuf">环形缓冲管理</a>
+  <a href="#fullcode">完整代码</a>
+</nav>
+
+<div class="wrapper">
+
+<!-- 1. 模块概述 -->
+<section class="card" id="overview">
+<h2>1. 模块概述</h2>
+
+<p>本模块驱动 <span class="tag tag-blue">ESP8266</span> WiFi 模组，通过 <strong>AT 指令集</strong> 完成 Wi-Fi 联网和 TCP 连接，最终与 OneNet 云平台的 MQTT Broker 通信（<code>mqtts.heclouds.com:1883</code>）。</p>
+
+<p>模块核心功能：</p>
+<ul style="padding-left:1.5rem; margin-bottom:0.8rem;">
+  <li>使用 <span class="tag tag-green">USART1</span> 与 ESP8266 通信（115200 波特率）</li>
+  <li>通过 <strong>AT 指令</strong> 配置 ESP8266 的工作模式、连接 Wi-Fi、建立 TCP 连接</li>
+  <li>提供 <strong>非阻塞中断接收</strong> 机制接收 ESP8266 返回的数据</li>
+  <li>支持 <strong>AT 指令响应等待</strong>（超时重试）、<strong>原始数据收发</strong>、<strong>+IPD 帧解析</strong></li>
+</ul>
+
+<p><span class="tag tag-amber">依赖</span> <code>BSP/bsp_usart.c</code> 提供 USART 初始化和字节发送函数；<code>BSP/bsp_delay.c</code> 提供毫秒级延时。</p>
+</section>
+
+<!-- 2. 硬件连接 -->
+<section class="card" id="hardware">
+<h2>2. 硬件连接</h2>
+
+<p>ESP8266 通过 USART1 与 STM32 全双工连接：</p>
+
+<table>
+  <tr><th>STM32 引脚</th><th>ESP8266 引脚</th><th>说明</th></tr>
+  <tr><td>PA9 (USART1_TX)</td><td>RXD</td><td>STM32 发送 → ESP8266 接收</td></tr>
+  <tr><td>PA10 (USART1_RX)</td><td>TXD</td><td>ESP8266 发送 → STM32 接收</td></tr>
+  <tr><td>3.3V</td><td>VCC / CH_PD</td><td>电源正极（需 3.3V / ≥300mA）</td></tr>
+  <tr><td>GND</td><td>GND</td><td>共地</td></tr>
+</table>
+
+<div class="callout">
+<strong>注意：</strong> ESP8266 的 CH_PD（使能）引脚必须拉高才能工作；RST 引脚可通过 10kΩ 上拉至 3.3V。电源需提供至少 300 mA 电流，建议加 100 μF 电解电容滤波。
+</div>
+
+<p>USART1 在 <code>bsp_usart.c</code> 中初始化，关键配置如下：</p>
+<pre><code><span class="cm">// PA9 = TX (复用推挽), PA10 = RX (浮空输入)</span>
+<span class="tp">gpioInitStruct</span>.GPIO_Mode = <span class="tp">GPIO_Mode_AF_PP</span>;
+<span class="tp">gpioInitStruct</span>.GPIO_Pin  = <span class="tp">GPIO_Pin_9</span>;    <span class="cm">// TX</span>
+<span class="tp">GPIO_Init</span>(<span class="tp">GPIOA</span>, &amp;gpioInitStruct);
+
+<span class="tp">gpioInitStruct</span>.GPIO_Mode = <span class="tp">GPIO_Mode_IN_FLOATING</span>;
+<span class="tp">gpioInitStruct</span>.GPIO_Pin  = <span class="tp">GPIO_Pin_10</span>;   <span class="cm">// RX</span>
+<span class="tp">GPIO_Init</span>(<span class="tp">GPIOA</span>, &amp;gpioInitStruct);
+
+<span class="cm">// 115200-8N1, 开启 RXNE 中断</span>
+<span class="tp">usartInitStruct</span>.USART_BaudRate = <span class="num">115200</span>;
+<span class="tp">USART_Init</span>(<span class="tp">USART1</span>, &amp;usartInitStruct);
+<span class="tp">USART_ITConfig</span>(<span class="tp">USART1</span>, <span class="tp">USART_IT_RXNE</span>, <span class="tp">ENABLE</span>);</code></pre>
+</section>
+
+<!-- 3. USART1 中断接收 -->
+<section class="card" id="usart">
+<h2>3. USART1 中断接收</h2>
+
+<p>ESP8266 返回的数据是异步到达的（AT 响应、+IPD 数据推送），因此采用 <strong>USART RXNE 中断</strong> 在后台逐字节接收：</p>
+
+<pre><code><span class="kw">void</span> <span class="fn">USART1_IRQHandler</span>(<span class="kw">void</span>)
+{
+    <span class="kw">if</span>(<span class="tp">USART_GetITStatus</span>(<span class="tp">USART1</span>, <span class="tp">USART_IT_RXNE</span>) != <span class="tp">RESET</span>)
+    {
+        <span class="cm">// 环形缓冲: 超限则回绕</span>
+        <span class="kw">if</span>(esp8266_cnt &gt;= <span class="kw">sizeof</span>(esp8266_buf))
+            esp8266_cnt = <span class="num">0</span>;
+
+        esp8266_buf[esp8266_cnt++] = <span class="tp">USART1</span>-&gt;DR;
+
+        <span class="tp">USART_ClearFlag</span>(<span class="tp">USART1</span>, <span class="tp">USART_FLAG_RXNE</span>);
+    }
+}</code></pre>
+
+<table>
+  <tr><th>特性</th><th>说明</th></tr>
+  <tr><td>缓冲区</td><td><code>esp8266_buf[512]</code> — 全局环形缓冲</td></tr>
+  <tr><td>写位置</td><td><code>esp8266_cnt</code> — ISR 中递增，主循环读取</td></tr>
+  <tr><td>回绕</td><td>当 cnt ≥ 512 时重置为 0</td></tr>
+  <tr><td>中断触发</td><td>USART_IT_RXNE — 每接收一个字节触发一次</td></tr>
+</table>
+
+<div class="callout-green">
+<strong>为什么用中断？</strong> ESP8266 的数据到达是完全异步且不可预测的。中断接收确保不会丢失任何字节，同时主循环可以专注于协议解析而不被串口接收阻塞。
+</div>
+</section>
+
+<!-- 4. AT 指令发送与响应等待 -->
+<section class="card" id="sendcmd">
+<h2>4. AT 指令发送与响应等待</h2>
+
+<p><code>ESP8266_SendCmd</code> 是模块最核心的通信函数：发送 AT 指令并等待期望的响应字符串。</p>
+
+<pre><code><span class="tp">_Bool</span> <span class="fn">ESP8266_SendCmd</span>(<span class="kw">char</span> *cmd, <span class="kw">char</span> *res)
+{
+    <span class="tp">unsigned char</span> timeOut = <span class="num">200</span>;
+
+    <span class="cm">// 1. 发送 AT 指令字符串</span>
+    <span class="fn">Usart_SendString</span>(<span class="tp">USART1</span>, (<span class="tp">unsigned char</span> *)cmd,
+                     <span class="fn">strlen</span>((<span class="kw">const</span> <span class="kw">char</span> *)cmd));
+
+    <span class="cm">// 2. 轮询等待响应, 超时 200 × 10ms = 2000ms</span>
+    <span class="kw">while</span>(timeOut--)
+    {
+        <span class="kw">if</span>(<span class="fn">ESP8266_WaitRecive</span>() == <span class="tp">REV_OK</span>)
+        {
+            <span class="cm">// 3. 检查缓冲区是否包含期望字符串</span>
+            <span class="kw">if</span>(<span class="fn">strstr</span>((<span class="kw">const</span> <span class="kw">char</span> *)esp8266_buf, res) != <span class="tp">NULL</span>)
+            {
+                <span class="fn">ESP8266_Clear</span>();
+                <span class="kw">return</span> <span class="num">0</span>;  <span class="cm">// 成功</span>
+            }
+        }
+        <span class="fn">DelayXms</span>(<span class="num">10</span>);
+    }
+
+    <span class="kw">return</span> <span class="num">1</span>;  <span class="cm">// 超时失败</span>
+}</code></pre>
+
+<h3>执行流程</h3>
+<ol style="padding-left:1.5rem; margin-bottom:0.8rem;">
+  <li>通过 <code>Usart_SendString</code> 将 AT 指令发出（如 <code>"AT\r\n"</code>）</li>
+  <li>进入 <strong>200 次</strong> 轮询循环，每次等待 10 ms（共 2 秒超时）</li>
+  <li>每次轮询调用 <code>ESP8266_WaitRecive()</code> 检查数据是否接收完毕</li>
+  <li>若接收完毕，用 <code>strstr</code> 在缓冲区中搜索期望字符串（如 <code>"OK"</code>）</li>
+  <li>匹配成功则清缓冲区并返回 0，超时则返回 1</li>
+</ol>
+
+<div class="callout">
+<strong>超时设计：</strong> 200 × 10 ms = 2 秒是普通 AT 指令的典型超时。对于 Wi-Fi 连接等耗时操作（如 <code>AT+CWJAP</code>），外部循环（<code>while</code> 重试）提供了额外的容错机制。
+</div>
+</section>
+
+<!-- 5. 初始化流程 -->
+<section class="card" id="init">
+<h2>5. 初始化流程 — ESP8266_Init</h2>
+
+<p>模块初始化是一个 <strong>阻塞重试</strong> 流程：按顺序执行 5 个步骤，每步失败后会等待 500 ms 重试：</p>
+
+<pre><code><span class="kw">void</span> <span class="fn">ESP8266_Init</span>(<span class="kw">void</span>)
+{
+    <span class="fn">ESP8266_Clear</span>();
+
+    <span class="cm">// 1. 测试 AT 通信</span>
+    <span class="kw">while</span>(<span class="fn">ESP8266_SendCmd</span>(<span class="str">"AT\r\n"</span>, <span class="str">"OK"</span>))
+        <span class="fn">DelayXms</span>(<span class="num">500</span>);
+
+    <span class="cm">// 2. 设置 Station 模式</span>
+    <span class="kw">while</span>(<span class="fn">ESP8266_SendCmd</span>(<span class="str">"AT+CWMODE=1\r\n"</span>, <span class="str">"OK"</span>))
+        <span class="fn">DelayXms</span>(<span class="num">500</span>);
+
+    <span class="cm">// 3. 启用 DHCP</span>
+    <span class="kw">while</span>(<span class="fn">ESP8266_SendCmd</span>(<span class="str">"AT+CWDHCP=1,1\r\n"</span>, <span class="str">"OK"</span>))
+        <span class="fn">DelayXms</span>(<span class="num">500</span>);
+
+    <span class="cm">// 4. 连接 Wi-Fi (等待 "GOT IP")</span>
+    <span class="kw">while</span>(<span class="fn">ESP8266_SendCmd</span>(ESP8266_WIFI_INFO, <span class="str">"GOT IP"</span>))
+        <span class="fn">DelayXms</span>(<span class="num">500</span>);
+
+    <span class="cm">// 5. TCP 连接到 OneNet (等待 "CONNECT")</span>
+    <span class="kw">while</span>(<span class="fn">ESP8266_SendCmd</span>(ESP8266_ONENET_INFO, <span class="str">"CONNECT"</span>))
+        <span class="fn">DelayXms</span>(<span class="num">500</span>);
+}</code></pre>
+
+<table>
+  <tr><th>步骤</th><th>AT 指令</th><th>期望响应</th><th>说明</th></tr>
+  <tr><td><span class="tag tag-green">1</span></td><td><code>AT</code></td><td><code>OK</code></td><td>测试 ESP8266 是否正常响应</td></tr>
+  <tr><td><span class="tag tag-blue">2</span></td><td><code>AT+CWMODE=1</code></td><td><code>OK</code></td><td>设置为 Station（客户端）模式</td></tr>
+  <tr><td><span class="tag tag-amber">3</span></td><td><code>AT+CWDHCP=1,1</code></td><td><code>OK</code></td><td>使能 Station DHCP 自动获取 IP</td></tr>
+  <tr><td><span class="tag tag-red">4</span></td><td><code>AT+CWJAP="SSID","PASS"</code></td><td><code>GOT IP</code></td><td>连接 Wi-Fi 热点（耗时最长）</td></tr>
+  <tr><td><span class="tag tag-green">5</span></td><td><code>AT+CIPSTART="TCP","..."</code></td><td><code>CONNECT</code></td><td>建立 TCP 连接到 OneNet MQTT</td></tr>
+</table>
+
+<p>Wi-Fi 名称和密码定义在宏中：</p>
+<pre><code><span class="kw">#define</span> ESP8266_WIFI_INFO    <span class="str">"AT+CWJAP=\"YOUR_WIFI_SSID\",\"YOUR_WIFI_PASSWORD\"\r\n"</span>
+<span class="kw">#define</span> ESP8266_ONENET_INFO  <span class="str">"AT+CIPSTART=\"TCP\",\"mqtts.heclouds.com\",1883\r\n"</span></code></pre>
+
+<div class="callout-red">
+<strong>注意：</strong> 实际使用时必须修改 <code>ESP8266_WIFI_INFO</code> 中的 SSID 和密码。OneNet 地址 <code>mqtts.heclouds.com:1883</code> 为中国移动物联网平台的标准 TCP 接入点。
+</div>
+</section>
+
+<!-- 6. 数据发送 -->
+<section class="card" id="senddata">
+<h2>6. 数据发送 — ESP8266_SendData</h2>
+
+<p>发送原始数据（如 MQTT 报文）需先通知 ESP8266 数据长度，等待 <code>">"</code> 提示符后发送：</p>
+
+<pre><code><span class="kw">void</span> <span class="fn">ESP8266_SendData</span>(<span class="tp">unsigned char</span> *data, <span class="tp">unsigned short</span> len)
+{
+    <span class="kw">char</span> cmdBuf[<span class="num">32</span>];
+
+    <span class="fn">ESP8266_Clear</span>();
+
+    <span class="cm">// 1. 发送 AT+CIPSEND=len</span>
+    <span class="fn">sprintf</span>(cmdBuf, <span class="str">"AT+CIPSEND=%d\r\n"</span>, len);
+
+    <span class="cm">// 2. 等待 ">" 提示符</span>
+    <span class="kw">if</span>(!<span class="fn">ESP8266_SendCmd</span>(cmdBuf, <span class="str">">"</span>))
+    {
+        <span class="cm">// 3. 收到 ">" 后直接发送原始数据</span>
+        <span class="fn">Usart_SendString</span>(<span class="tp">USART1</span>, data, len);
+    }
+}</code></pre>
+
+<div class="callout-green">
+<strong>协议特点：</strong> ESP8266 的透传发送模式需要两步握手——先发 <code>AT+CIPSEND=len</code> 告知即将发送的字节数，等模组返回 <code>">"</code> 提示符后再发送实际数据。如果直接发送数据，ESP8266 会将其当作 AT 命令解析。
+</div>
+</section>
+
+<!-- 7. 数据接收 -->
+<section class="card" id="recvdata">
+<h2>7. 数据接收 — ESP8266_GetIPD</h2>
+
+<p>当 ESP8266 收到 TCP 数据时，会以 <code>+IPD,&lt;len&gt;:&lt;data&gt;</code> 格式推送。此函数解析该帧并返回数据指针：</p>
+
+<pre><code><span class="tp">unsigned char</span> *<span class="fn">ESP8266_GetIPD</span>(<span class="tp">unsigned short</span> timeOut)
+{
+    <span class="kw">char</span> *ptrIPD = <span class="tp">NULL</span>;
+
+    <span class="kw">do</span>
+    {
+        <span class="cm">// 1. 等待数据接收完毕</span>
+        <span class="kw">if</span>(<span class="fn">ESP8266_WaitRecive</span>() == <span class="tp">REV_OK</span>)
+        {
+            <span class="cm">// 2. 搜索 "+IPD," 或 "IPD," 前缀</span>
+            ptrIPD = <span class="fn">strstr</span>((<span class="kw">char</span> *)esp8266_buf, <span class="str">"+IPD,"</span>);
+            <span class="kw">if</span>(ptrIPD == <span class="tp">NULL</span>)
+                ptrIPD = <span class="fn">strstr</span>((<span class="kw">char</span> *)esp8266_buf, <span class="str">"IPD,"</span>);
+
+            <span class="cm">// 3. 找到冒号分隔符, 返回其后数据指针</span>
+            <span class="kw">if</span>(ptrIPD != <span class="tp">NULL</span>)
+            {
+                ptrIPD = <span class="fn">strchr</span>(ptrIPD, <span class="str">':'</span>);
+                <span class="kw">if</span>(ptrIPD != <span class="tp">NULL</span>)
+                {
+                    ptrIPD++;
+                    <span class="kw">return</span> (<span class="tp">unsigned char</span> *)(ptrIPD);
+                }
+            }
+        }
+
+        <span class="fn">DelayXms</span>(<span class="num">5</span>);
+        timeOut--;
+    } <span class="kw">while</span>(timeOut &gt; <span class="num">0</span>);
+
+    <span class="kw">return</span> <span class="tp">NULL</span>;  <span class="cm">// 超时未收到 IPD 帧</span>
+}</code></pre>
+
+<div class="callout">
+<strong>解析示例：</strong> 如果缓冲区内容为 <code>"\r\n+IPD,5:Hello\r\n"</code>，函数返回指向 <code>"Hello\r\n"</code> 的指针。调用者需根据帧头中声明的长度（本例中为 5）读取对应字节数。
+</div>
+</section>
+
+<!-- 8. 环形缓冲管理 -->
+<section class="card" id="ringbuf">
+<h2>8. 环形缓冲区管理</h2>
+
+<p>模块基于 <strong>单生产者（ISR）— 单消费者（主循环）</strong> 模型管理接收数据：</p>
+
+<pre><code><span class="tp">unsigned char</span> esp8266_buf[<span class="num">512</span>];        <span class="cm">// 接收缓冲区</span>
+<span class="tp">unsigned short</span> esp8266_cnt = <span class="num">0</span>;       <span class="cm">// ISR 中的写入位置</span>
+<span class="tp">unsigned short</span> esp8266_cntPre = <span class="num">0</span>;    <span class="cm">// 上一次快照位置</span></code></pre>
+
+<h3>ESP8266_Clear — 清空缓冲</h3>
+<pre><code><span class="kw">void</span> <span class="fn">ESP8266_Clear</span>(<span class="kw">void</span>)
+{
+    <span class="fn">memset</span>(esp8266_buf, <span class="num">0</span>, <span class="kw">sizeof</span>(esp8266_buf));
+    esp8266_cnt = <span class="num">0</span>;
+}</code></pre>
+
+<h3>ESP8266_WaitRecive — 等待数据稳定</h3>
+<pre><code><span class="tp">_Bool</span> <span class="fn">ESP8266_WaitRecive</span>(<span class="kw">void</span>)
+{
+    <span class="kw">if</span>(esp8266_cnt == <span class="num">0</span>)
+        <span class="kw">return</span> <span class="tp">REV_WAIT</span>;     <span class="cm">// 还没有数据</span>
+
+    <span class="kw">if</span>(esp8266_cnt == esp8266_cntPre)
+    {
+        <span class="cm">// cnt 不再变化 = 数据接收完毕</span>
+        esp8266_cnt = <span class="num">0</span>;
+        <span class="kw">return</span> <span class="tp">REV_OK</span>;       <span class="cm">// 可以处理了</span>
+    }
+
+    esp8266_cntPre = esp8266_cnt;  <span class="cm">// 更新快照</span>
+    <span class="kw">return</span> <span class="tp">REV_WAIT</span>;            <span class="cm">// 还在接收中</span>
+}</code></pre>
+
+<table>
+  <tr><th>变量 / 函数</th><th>作用</th></tr>
+  <tr><td><code>esp8266_cnt</code></td><td>ISR 实时更新的写入位置</td></tr>
+  <tr><td><code>esp8266_cntPre</code></td><td>保存上一次采样的 cnt 值</td></tr>
+  <tr><td><code>ESP8266_Clear()</code></td><td>清空缓冲 + 重置 cnt</td></tr>
+  <tr><td><code>ESP8266_WaitRecive()</code></td><td>返回 <code>REV_OK</code> 表示数据已稳定（不再增长）</td></tr>
+</table>
+
+<div class="callout-green">
+<strong>工作原理：</strong> 当 ISR 向缓冲区写入数据时，<code>cnt</code> 不断递增。主循环每次调用 <code>ESP8266_WaitRecive()</code> 都会比较当前 cnt 与快照 cntPre。如果相等（且非零），说明 ISR 已停止写入，数据已完整到达。这种"静默检测"机制比固定延时更高效。
+</div>
+</section>
+
+<!-- 9. 完整代码 -->
+<section class="card" id="fullcode">
+<h2>9. 完整代码</h2>
+
+<h3>esp8266.h</h3>
+<pre><code><span class="cm">/* esp8266.h — ESP8266 驱动头文件 */</span>
+<span class="kw">#ifndef</span> _ESP8266_H_
+<span class="kw">#define</span> _ESP8266_H_
+
+<span class="kw">#define</span> <span class="tp">REV_OK</span>   <span class="num">0</span>   <span class="cm">// 数据接收完毕</span>
+<span class="kw">#define</span> <span class="tp">REV_WAIT</span> <span class="num">1</span>   <span class="cm">// 等待数据</span>
+
+<span class="kw">void</span> <span class="fn">ESP8266_Init</span>(<span class="kw">void</span>);
+<span class="kw">void</span> <span class="fn">ESP8266_Clear</span>(<span class="kw">void</span>);
+<span class="tp">_Bool</span> <span class="fn">ESP8266_SendCmd</span>(<span class="kw">char</span> *cmd, <span class="kw">char</span> *res);
+<span class="kw">void</span> <span class="fn">ESP8266_SendData</span>(<span class="tp">unsigned char</span> *data, <span class="tp">unsigned short</span> len);
+<span class="tp">unsigned char</span> *<span class="fn">ESP8266_GetIPD</span>(<span class="tp">unsigned short</span> timeOut);
+
+<span class="kw">#endif</span></code></pre>
+
+<h3>esp8266.c</h3>
+<pre><code><span class="cm">/* esp8266.c — ESP8266 驱动实现 */</span>
+<span class="kw">#include</span> <span class="str">"stm32f10x.h"</span>
+<span class="kw">#include</span> <span class="str">"esp8266.h"</span>
+<span class="kw">#include</span> <span class="str">"bsp_delay.h"</span>
+<span class="kw">#include</span> <span class="str">"bsp_usart.h"</span>
+<span class="kw">#include</span> <span class="str">&lt;string.h&gt;</span>
+<span class="kw">#include</span> <span class="str">&lt;stdio.h&gt;</span>
+
+<span class="kw">#define</span> ESP8266_WIFI_INFO   <span class="str">"AT+CWJAP=\"YOUR_WIFI_SSID\",\"YOUR_WIFI_PASSWORD\"\r\n"</span>
+<span class="kw">#define</span> ESP8266_ONENET_INFO <span class="str">"AT+CIPSTART=\"TCP\",\"mqtts.heclouds.com\",1883\r\n"</span>
+
+<span class="tp">unsigned char</span> esp8266_buf[<span class="num">512</span>];
+<span class="tp">unsigned short</span> esp8266_cnt = <span class="num">0</span>, esp8266_cntPre = <span class="num">0</span>;
+
+<span class="cm">// 清空接收缓冲区</span>
+<span class="kw">void</span> <span class="fn">ESP8266_Clear</span>(<span class="kw">void</span>)
+{
+    <span class="fn">memset</span>(esp8266_buf, <span class="num">0</span>, <span class="kw">sizeof</span>(esp8266_buf));
+    esp8266_cnt = <span class="num">0</span>;
+}
+
+<span class="cm">// 等待数据稳定 (不再接收新字节)</span>
+<span class="tp">_Bool</span> <span class="fn">ESP8266_WaitRecive</span>(<span class="kw">void</span>)
+{
+    <span class="kw">if</span>(esp8266_cnt == <span class="num">0</span>)
+        <span class="kw">return</span> <span class="tp">REV_WAIT</span>;
+
+    <span class="kw">if</span>(esp8266_cnt == esp8266_cntPre)
+    {
+        esp8266_cnt = <span class="num">0</span>;
+        <span class="kw">return</span> <span class="tp">REV_OK</span>;
+    }
+
+    esp8266_cntPre = esp8266_cnt;
+    <span class="kw">return</span> <span class="tp">REV_WAIT</span>;
+}
+
+<span class="cm">// 发送 AT 指令并等待期望响应</span>
+<span class="tp">_Bool</span> <span class="fn">ESP8266_SendCmd</span>(<span class="kw">char</span> *cmd, <span class="kw">char</span> *res)
+{
+    <span class="tp">unsigned char</span> timeOut = <span class="num">200</span>;
+
+    <span class="fn">Usart_SendString</span>(<span class="tp">USART1</span>,
+        (<span class="tp">unsigned char</span> *)cmd, <span class="fn">strlen</span>((<span class="kw">const</span> <span class="kw">char</span> *)cmd));
+
+    <span class="kw">while</span>(timeOut--)
+    {
+        <span class="kw">if</span>(<span class="fn">ESP8266_WaitRecive</span>() == <span class="tp">REV_OK</span>)
+        {
+            <span class="kw">if</span>(<span class="fn">strstr</span>((<span class="kw">const</span> <span class="kw">char</span> *)esp8266_buf, res) != <span class="tp">NULL</span>)
+            {
+                <span class="fn">ESP8266_Clear</span>();
+                <span class="kw">return</span> <span class="num">0</span>;  <span class="cm">// 成功</span>
+            }
+        }
+        <span class="fn">DelayXms</span>(<span class="num">10</span>);
+    }
+    <span class="kw">return</span> <span class="num">1</span>;  <span class="cm">// 超时</span>
+}
+
+<span class="cm">// 发送原始数据 (MQTT 报文等)</span>
+<span class="kw">void</span> <span class="fn">ESP8266_SendData</span>(<span class="tp">unsigned char</span> *data, <span class="tp">unsigned short</span> len)
+{
+    <span class="kw">char</span> cmdBuf[<span class="num">32</span>];
+    <span class="fn">ESP8266_Clear</span>();
+    <span class="fn">sprintf</span>(cmdBuf, <span class="str">"AT+CIPSEND=%d\r\n"</span>, len);
+    <span class="kw">if</span>(!<span class="fn">ESP8266_SendCmd</span>(cmdBuf, <span class="str">">"</span>))
+    {
+        <span class="fn">Usart_SendString</span>(<span class="tp">USART1</span>, data, len);
+    }
+}
+
+<span class="cm">// 解析 +IPD 帧, 返回数据指针</span>
+<span class="tp">unsigned char</span> *<span class="fn">ESP8266_GetIPD</span>(<span class="tp">unsigned short</span> timeOut)
+{
+    <span class="kw">char</span> *ptrIPD = <span class="tp">NULL</span>;
+
+    <span class="kw">do</span>
+    {
+        <span class="kw">if</span>(<span class="fn">ESP8266_WaitRecive</span>() == <span class="tp">REV_OK</span>)
+        {
+            ptrIPD = <span class="fn">strstr</span>((<span class="kw">char</span> *)esp8266_buf, <span class="str">"+IPD,"</span>);
+            <span class="kw">if</span>(ptrIPD == <span class="tp">NULL</span>)
+                ptrIPD = <span class="fn">strstr</span>((<span class="kw">char</span> *)esp8266_buf, <span class="str">"IPD,"</span>);
+
+            <span class="kw">if</span>(ptrIPD != <span class="tp">NULL</span>)
+            {
+                ptrIPD = <span class="fn">strchr</span>(ptrIPD, <span class="str">':'</span>);
+                <span class="kw">if</span>(ptrIPD != <span class="tp">NULL</span>)
+                {
+                    ptrIPD++;
+                    <span class="kw">return</span> (<span class="tp">unsigned char</span> *)(ptrIPD);
+                }
+            }
+        }
+        <span class="fn">DelayXms</span>(<span class="num">5</span>);
+        timeOut--;
+    } <span class="kw">while</span>(timeOut &gt; <span class="num">0</span>);
+
+    <span class="kw">return</span> <span class="tp">NULL</span>;  <span class="cm">// 超时</span>
+}
+
+<span class="cm">// 初始化: AT → 模式 → DHCP → WiFi → TCP</span>
+<span class="kw">void</span> <span class="fn">ESP8266_Init</span>(<span class="kw">void</span>)
+{
+    <span class="fn">ESP8266_Clear</span>();
+
+    <span class="kw">while</span>(<span class="fn">ESP8266_SendCmd</span>(<span class="str">"AT\r\n"</span>, <span class="str">"OK"</span>))
+        <span class="fn">DelayXms</span>(<span class="num">500</span>);
+
+    <span class="kw">while</span>(<span class="fn">ESP8266_SendCmd</span>(<span class="str">"AT+CWMODE=1\r\n"</span>, <span class="str">"OK"</span>))
+        <span class="fn">DelayXms</span>(<span class="num">500</span>);
+
+    <span class="kw">while</span>(<span class="fn">ESP8266_SendCmd</span>(<span class="str">"AT+CWDHCP=1,1\r\n"</span>, <span class="str">"OK"</span>))
+        <span class="fn">DelayXms</span>(<span class="num">500</span>);
+
+    <span class="kw">while</span>(<span class="fn">ESP8266_SendCmd</span>(ESP8266_WIFI_INFO, <span class="str">"GOT IP"</span>))
+        <span class="fn">DelayXms</span>(<span class="num">500</span>);
+
+    <span class="kw">while</span>(<span class="fn">ESP8266_SendCmd</span>(ESP8266_ONENET_INFO, <span class="str">"CONNECT"</span>))
+        <span class="fn">DelayXms</span>(<span class="num">500</span>);
+}
+
+<span class="cm">// USART1 中断: RXNE 逐字节存入环形缓冲</span>
+<span class="kw">void</span> <span class="fn">USART1_IRQHandler</span>(<span class="kw">void</span>)
+{
+    <span class="kw">if</span>(<span class="tp">USART_GetITStatus</span>(<span class="tp">USART1</span>, <span class="tp">USART_IT_RXNE</span>) != <span class="tp">RESET</span>)
+    {
+        <span class="kw">if</span>(esp8266_cnt &gt;= <span class="kw">sizeof</span>(esp8266_buf))
+            esp8266_cnt = <span class="num">0</span>;
+
+        esp8266_buf[esp8266_cnt++] = <span class="tp">USART1</span>-&gt;DR;
+        <span class="tp">USART_ClearFlag</span>(<span class="tp">USART1</span>, <span class="tp">USART_FLAG_RXNE</span>);
+    }
+}</code></pre>
+</section>
+
+</div>
+</body>
+</html>

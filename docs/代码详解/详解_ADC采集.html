@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ADC+DMA 土壤湿度采集模块详解</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; background: #e8f5e9; color: #1b5e20; line-height: 1.8; }
+header {
+  background: linear-gradient(135deg, #004d40, #00695c);
+  color: #fff; text-align: center; padding: 48px 20px 36px;
+}
+header h1 { font-size: 2rem; letter-spacing: 2px; margin-bottom: 6px; }
+header p { font-size: 0.95rem; opacity: .85; }
+nav {
+  position: sticky; top: 0; z-index: 100;
+  background: #1b5e20; padding: 10px 0; text-align: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,.3);
+}
+nav a {
+  color: #a5d6a7; text-decoration: none; margin: 0 14px;
+  font-size: 0.95rem; font-weight: 600; transition: color .2s;
+}
+nav a:hover { color: #fff; }
+.container { max-width: 960px; margin: 0 auto; padding: 30px 20px 60px; }
+.card {
+  background: #fff; border-radius: 10px; padding: 28px 32px;
+  margin-bottom: 28px; box-shadow: 0 2px 12px rgba(0,77,64,.10);
+  border-left: 4px solid #00695c;
+}
+.card h2 {
+  font-size: 1.35rem; color: #004d40; margin-bottom: 16px;
+  padding-bottom: 8px; border-bottom: 2px solid #c8e6c9;
+}
+.card h3 { font-size: 1.05rem; color: #00695c; margin: 18px 0 10px; }
+.card p { margin: 8px 0; }
+pre {
+  background: #1e1e2e; color: #cdd6f4; border-radius: 8px;
+  padding: 16px 20px; font-size: 0.85rem; font-family: 'JetBrains Mono','Fira Code','Consolas',monospace;
+  overflow-x: auto; margin: 12px 0; tab-size: 4;
+}
+pre .kw { color: #89b4fa; } pre .fn { color: #a6e3a1; }
+pre .str { color: #f9e2af; } pre .cm { color: #6c7086; font-style: italic; }
+pre .num { color: #fab387; } pre .tp { color: #94e2d5; }
+pre .mp { color: #cba6f7; } pre .op { color: #89dceb; }
+.callout {
+  border-radius: 8px; padding: 14px 18px; margin: 14px 0;
+  font-size: 0.93rem;
+}
+.callout-info { background: #e3f2fd; border-left: 4px solid #1976d2; color: #0d47a1; }
+.callout-success { background: #e8f5e9; border-left: 4px solid #2e7d32; color: #1b5e20; }
+.callout-warning { background: #fff3e0; border-left: 4px solid #e65100; color: #bf360c; }
+table {
+  width: 100%; border-collapse: collapse; margin: 12px 0;
+  font-size: 0.9rem;
+}
+th { background: #004d40; color: #fff; padding: 10px 14px; text-align: left; }
+td { padding: 9px 14px; border-bottom: 1px solid #c8e6c9; }
+tr:nth-child(even) td { background: #f1f8e9; }
+kbd {
+  background: #1b5e20; color: #fff; padding: 2px 8px;
+  border-radius: 4px; font-size: 0.8rem; font-family: inherit;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>ADC + DMA 土壤湿度采集模块详解</h1>
+  <p>BSP/bsp_adc.c + BSP/bsp_adc.h &nbsp;|&nbsp; STM32F103 智能浇花系统</p>
+</header>
+
+<nav>
+  <a href="详解_ADC采集.html">ADC 采集</a>
+  <a href="详解_按键驱动.html">按键驱动</a>
+  <a href="详解_延时驱动.html">延时驱动</a>
+</nav>
+
+<div class="container">
+
+<!-- ========== 1. 模块概述 ========== -->
+<div class="card">
+<h2>1. 模块概述</h2>
+<p>本模块通过 STM32F103 的 <strong>ADC1</strong> 采集土壤湿度传感器的模拟电压信号，并配合 <strong>DMA 循环模式</strong> 实现无需 CPU 干预的连续自动转换。</p>
+
+<div class="callout callout-info">
+<strong>硬件连接：</strong> 土壤湿度传感器模拟输出 &rarr; <kbd>PA1</kbd> (ADC1_IN1)。ADC 转换结果通过 DMA1 通道 1 自动搬运至内存数组 <code>ADC_ConvertedValue[1]</code>。
+</div>
+
+<ul style="margin:10px 0 0 20px;">
+  <li><strong>ADC 分辨率：</strong> 12 位（0 ~ 4095）</li>
+  <li><strong>转换模式：</strong> 独立模式 + 连续转换 + 扫描模式</li>
+  <li><strong>DMA 模式：</strong> Circular（环形缓冲区），一次配置永续运行</li>
+  <li><strong>采样通道：</strong> 通道 1，采样周期 55.5 个 ADC 时钟周期</li>
+</ul>
+</div>
+
+<!-- ========== 2. 引脚配置 ========== -->
+<div class="card">
+<h2>2. 引脚配置 &mdash; ADCx_GPIO_Config</h2>
+<p>将 PA1 配置为<strong>模拟输入模式</strong>（<code>GPIO_Mode_AIN</code>），使 ADC 能够正常读取外部模拟电压。</p>
+
+<pre><span class="cm">/**
+  * @brief  ADC GPIO 初始化
+  */</span>
+<span class="kw">static void</span> <span class="fn">ADCx_GPIO_Config</span>(<span class="kw">void</span>)
+{
+    <span class="tp">GPIO_InitTypeDef</span> GPIO_InitStructure;
+
+    <span class="fn">RCC_APB2PeriphClockCmd</span>(ADC_GPIO_CLK, <span class="kw">ENABLE</span>);
+
+    GPIO_InitStructure.GPIO_Pin   = <span class="mp">ADC_PIN1</span>;            <span class="cm">// GPIO_Pin_1</span>
+    GPIO_InitStructure.GPIO_Mode  = <span class="mp">GPIO_Mode_AIN</span>;        <span class="cm">// 模拟输入</span>
+
+    <span class="fn">GPIO_Init</span>(ADC_PORT, &amp;GPIO_InitStructure);
+}</pre>
+
+<div class="callout callout-success">
+<strong>关键点：</strong> 模拟输入模式下，GPIO 的上下拉电阻和施密特触发器均被禁用，引脚电平完全由外部模拟信号决定。
+</div>
+</div>
+
+<!-- ========== 3. ADC+DMA 模式配置 ========== -->
+<div class="card">
+<h2>3. ADC+DMA 模式配置 &mdash; ADCx_Mode_Config</h2>
+<p>这是模块的核心函数，完成 DMA 传输通道和 ADC 工作模式的完整初始化。</p>
+
+<pre><span class="cm">/* ========== DMA 配置 ========== */</span>
+<span class="fn">RCC_AHBPeriphClockCmd</span>(ADC_DMA_CLK, <span class="kw">ENABLE</span>);    <span class="cm">// DMA1 时钟使能</span>
+<span class="fn">ADC_APBxClock_FUN</span>(ADC_CLK, <span class="kw">ENABLE</span>);              <span class="cm">// ADC1 时钟使能</span>
+
+<span class="fn">DMA_DeInit</span>(ADC_DMA_CHANNEL);                        <span class="cm">// 复位 DMA 通道</span>
+
+<span class="cm">// 外设地址 = ADC1 数据寄存器</span>
+DMA_InitStructure.<span class="mp">DMA_PeripheralBaseAddr</span> = (<span class="tp">u32</span>)(&amp;(<span class="mp">ADC_x</span>-&gt;DR));
+<span class="cm">// 内存地址 = ADC_ConvertedValue[0]</span>
+DMA_InitStructure.<span class="mp">DMA_MemoryBaseAddr</span>     = (<span class="tp">u32</span>)<span class="mp">ADC_ConvertedValue</span>;
+DMA_InitStructure.<span class="mp">DMA_DIR</span>                = <span class="mp">DMA_DIR_PeripheralSRC</span>;  <span class="cm">// 外设→内存</span>
+DMA_InitStructure.<span class="mp">DMA_BufferSize</span>         = <span class="mp">NOFCHANEL</span>;                <span class="cm">// 1</span>
+DMA_InitStructure.<span class="mp">DMA_PeripheralInc</span>      = <span class="mp">DMA_PeripheralInc_Disable</span>;
+DMA_InitStructure.<span class="mp">DMA_MemoryInc</span>         = <span class="mp">DMA_MemoryInc_Enable</span>;
+DMA_InitStructure.<span class="mp">DMA_PeripheralDataSize</span> = <span class="mp">DMA_PeripheralDataSize_HalfWord</span>; <span class="cm">// 16位</span>
+DMA_InitStructure.<span class="mp">DMA_MemoryDataSize</span>    = <span class="mp">DMA_MemoryDataSize_HalfWord</span>;
+DMA_InitStructure.<span class="mp">DMA_Mode</span>              = <span class="mp">DMA_Mode_Circular</span>;        <span class="cm">// ★ 循环模式</span>
+DMA_InitStructure.<span class="mp">DMA_Priority</span>          = <span class="mp">DMA_Priority_High</span>;
+DMA_InitStructure.<span class="mp">DMA_M2M</span>               = <span class="mp">DMA_M2M_Disable</span>;
+
+<span class="fn">DMA_Init</span>(ADC_DMA_CHANNEL, &amp;DMA_InitStructure);
+<span class="fn">DMA_Cmd</span>(ADC_DMA_CHANNEL, <span class="kw">ENABLE</span>);</pre>
+
+<div class="callout callout-warning">
+<strong>DMA 循环模式：</strong> <code>DMA_Mode_Circular</code> 使传输完成后自动重载，ADC 数据将持续不断地写入 <code>ADC_ConvertedValue[0]</code>，CPU 只需在需要时读取该变量即可，完全无需干预。
+</div>
+
+<pre><span class="cm">/* ========== ADC 配置 ========== */</span>
+ADC_InitStructure.<span class="mp">ADC_Mode</span>               = <span class="mp">ADC_Mode_Independent</span>;    <span class="cm">// 独立模式</span>
+ADC_InitStructure.<span class="mp">ADC_ScanConvMode</span>        = <span class="kw">ENABLE</span>;                  <span class="cm">// 扫描模式</span>
+ADC_InitStructure.<span class="mp">ADC_ContinuousConvMode</span>   = <span class="kw">ENABLE</span>;                  <span class="cm">// ★ 连续转换</span>
+ADC_InitStructure.<span class="mp">ADC_ExternalTrigConv</span>    = <span class="mp">ADC_ExternalTrigConv_None</span>; <span class="cm">// 软件触发</span>
+ADC_InitStructure.<span class="mp">ADC_DataAlign</span>           = <span class="mp">ADC_DataAlign_Right</span>;      <span class="cm">// 右对齐</span>
+ADC_InitStructure.<span class="mp">ADC_NbrOfChannel</span>        = <span class="mp">NOFCHANEL</span>;                  <span class="cm">// 1 个通道</span>
+
+<span class="fn">ADC_Init</span>(ADC_x, &amp;ADC_InitStructure);
+
+<span class="cm">// 配置通道 1：采样时间 55.5 个周期</span>
+<span class="fn">ADC_RegularChannelConfig</span>(ADC_x, <span class="mp">ADC_CHANNEL1</span>, <span class="num">1</span>, <span class="mp">ADC_SampleTime_55Cycles5</span>);
+
+<span class="cm">// 使能 DMA 请求</span>
+<span class="fn">ADC_DMACmd</span>(ADC_x, <span class="kw">ENABLE</span>);
+<span class="fn">ADC_Cmd</span>(ADC_x, <span class="kw">ENABLE</span>);</pre>
+
+<div class="callout callout-success">
+<strong>连续转换 + DMA：</strong> ADC 一旦启动便不停地进行转换，每次转换完成自动触发 DMA 传输，形成"转换 &rarr; 搬运 &rarr; 再转换"的流水线，CPU 零开销。
+</div>
+
+<pre><span class="cm">/* ========== 校准序列 ========== */</span>
+<span class="fn">ADC_ResetCalibration</span>(ADC_x);                    <span class="cm">// 复位校准</span>
+<span class="kw">while</span>(<span class="fn">ADC_GetResetCalibrationStatus</span>(ADC_x));    <span class="cm">// 等待复位完成</span>
+
+<span class="fn">ADC_StartCalibration</span>(ADC_x);                    <span class="cm">// 开始校准</span>
+<span class="kw">while</span>(<span class="fn">ADC_GetCalibrationStatus</span>(ADC_x));          <span class="cm">// 等待校准完成</span>
+
+<span class="fn">ADC_SoftwareStartConvCmd</span>(ADC_x, <span class="kw">ENABLE</span>);       <span class="cm">// ★ 软件触发启动</span></pre>
+
+<div class="callout callout-info">
+<strong>校准说明：</strong> STM32 的 ADC 内置自校准功能，通过内部注入的参考电压修正偏移误差。必须先复位校准状态再启动校准，校准完成后才能保证转换精度。
+</div>
+</div>
+
+<!-- ========== 4. ADC值转湿度公式 ========== -->
+<div class="card">
+<h2>4. ADC 值 &rarr; 湿度百分比公式</h2>
+<p>该函数位于 <strong>main.c</strong>，将 12 位 ADC 原始值线性映射为 0 ~ 100% 的土壤湿度。</p>
+
+<pre><span class="cm">// 标定常数（main.c）</span>
+<span class="kw">#define</span> <span class="mp">ADC_DRY_VALUE</span>  <span class="num">0</span>      <span class="cm">// 干燥（空气中）</span>
+<span class="kw">#define</span> <span class="mp">ADC_WET_VALUE</span>  <span class="num">2160</span>   <span class="cm">// 湿润（水中）</span>
+
+<span class="kw">float</span> <span class="fn">ADC_To_Humidity</span>(<span class="tp">uint16_t</span> adc_val)
+{
+    <span class="kw">float</span> range  = (<span class="kw">float</span>)(<span class="mp">ADC_WET_VALUE</span> - <span class="mp">ADC_DRY_VALUE</span>);
+    <span class="kw">if</span> (range &lt;= <span class="num">0</span>)  <span class="kw">return</span> <span class="num">0.0f</span>;
+
+    <span class="kw">if</span> (adc_val &lt;= <span class="mp">ADC_DRY_VALUE</span>) <span class="kw">return</span>  <span class="num">0.0f</span>;    <span class="cm">// 下限裁剪</span>
+    <span class="kw">if</span> (adc_val &gt;= <span class="mp">ADC_WET_VALUE</span>) <span class="kw">return</span> <span class="num">100.0f</span>;   <span class="cm">// 上限裁剪</span>
+
+    <span class="kw">return</span> (<span class="kw">float</span>)(adc_val - <span class="mp">ADC_DRY_VALUE</span>) / range * <span class="num">100.0f</span>;
+}</pre>
+
+<div class="callout callout-success">
+<strong>线性映射原理：</strong> 传感器在干燥空气中输出接近 0 的电压（ADC ≈ 0），完全浸入水中输出约 1.6V（ADC ≈ 2160）。公式 <code>percent = (adc - DRY) / (WET - DRY) × 100%</code> 将 ADC 值线性映射到 0 ~ 100，超出范围时自动裁剪。
+</div>
+
+<table>
+  <tr><th>ADC 原始值</th><th>土壤状态</th><th>输出湿度</th></tr>
+  <tr><td>0</td><td>完全干燥</td><td>0%</td></tr>
+  <tr><td>540</td><td>偏干</td><td>25%</td></tr>
+  <tr><td>1080</td><td>适中</td><td>50%</td></tr>
+  <tr><td>1620</td><td>偏湿</td><td>75%</td></tr>
+  <tr><td>2160</td><td>完全湿润</td><td>100%</td></tr>
+</table>
+</div>
+
+<!-- ========== 5. 完整代码 ========== -->
+<div class="card">
+<h2>5. 完整代码</h2>
+
+<h3>bsp_adc.h</h3>
+<pre><span class="kw">#ifndef</span> _BSP_ADC_H
+<span class="kw">#define</span> _BSP_ADC_H
+<span class="kw">#include</span> <span class="str">"stm32f10x.h"</span>
+
+<span class="kw">#define</span> <span class="mp">ADC_APBxClock_FUN</span>        <span class="fn">RCC_APB2PeriphClockCmd</span>
+<span class="kw">#define</span> <span class="mp">ADC_CLK</span>                  <span class="mp">RCC_APB2Periph_ADC1</span>
+<span class="kw">#define</span> <span class="mp">ADC_GPIO_APBxClock_FUN</span>   <span class="fn">RCC_APB2PeriphClockCmd</span>
+<span class="kw">#define</span> <span class="mp">ADC_GPIO_CLK</span>             <span class="mp">RCC_APB2Periph_GPIOA</span>
+<span class="kw">#define</span> <span class="mp">ADC_PORT</span>                 <span class="mp">GPIOA</span>
+<span class="kw">#define</span> <span class="mp">ADC_PIN1</span>                 <span class="mp">GPIO_Pin_1</span>
+<span class="kw">#define</span> <span class="mp">ADC_CHANNEL1</span>             <span class="mp">ADC_Channel_1</span>
+<span class="kw">#define</span> <span class="mp">ADC_x</span>                    <span class="mp">ADC1</span>
+<span class="kw">#define</span> <span class="mp">ADC_DMA_CHANNEL</span>          <span class="mp">DMA1_Channel1</span>
+<span class="kw">#define</span> <span class="mp">ADC_DMA_CLK</span>              <span class="mp">RCC_AHBPeriph_DMA1</span>
+<span class="kw">#define</span> <span class="mp">NOFCHANEL</span>               <span class="num">1</span>
+
+<span class="kw">extern</span> <span class="tp">uint16_t</span> <span class="mp">ADC_ConvertedValue</span>[<span class="num">1</span>];
+<span class="kw">void</span> <span class="fn">ADCx_Init</span>(<span class="kw">void</span>);
+
+<span class="kw">#endif</span></pre>
+
+<h3>bsp_adc.c</h3>
+<pre><span class="kw">#include</span> <span class="str">"bsp_adc.h"</span>
+
+<span class="tp">uint16_t</span> <span class="mp">ADC_ConvertedValue</span>[<span class="mp">NOFCHANEL</span>] = {<span class="num">0</span>};
+
+<span class="kw">static void</span> <span class="fn">ADCx_GPIO_Config</span>(<span class="kw">void</span>)
+{
+    <span class="tp">GPIO_InitTypeDef</span> GPIO_InitStructure;
+    <span class="fn">RCC_APB2PeriphClockCmd</span>(ADC_GPIO_CLK, <span class="kw">ENABLE</span>);
+    GPIO_InitStructure.GPIO_Pin  = <span class="mp">ADC_PIN1</span>;
+    GPIO_InitStructure.GPIO_Mode = <span class="mp">GPIO_Mode_AIN</span>;
+    <span class="fn">GPIO_Init</span>(ADC_PORT, &amp;GPIO_InitStructure);
+}
+
+<span class="kw">static void</span> <span class="fn">ADCx_Mode_Config</span>(<span class="kw">void</span>)
+{
+    <span class="tp">DMA_InitTypeDef</span> DMA_InitStructure;
+    <span class="tp">ADC_InitTypeDef</span> ADC_InitStructure;
+
+    <span class="fn">RCC_AHBPeriphClockCmd</span>(ADC_DMA_CLK, <span class="kw">ENABLE</span>);
+    <span class="fn">ADC_APBxClock_FUN</span>(ADC_CLK, <span class="kw">ENABLE</span>);
+    <span class="fn">DMA_DeInit</span>(ADC_DMA_CHANNEL);
+
+    DMA_InitStructure.DMA_PeripheralBaseAddr  = (<span class="tp">u32</span>)(&amp;(<span class="mp">ADC_x</span>-&gt;DR));
+    DMA_InitStructure.DMA_MemoryBaseAddr      = (<span class="tp">u32</span>)<span class="mp">ADC_ConvertedValue</span>;
+    DMA_InitStructure.DMA_DIR                 = <span class="mp">DMA_DIR_PeripheralSRC</span>;
+    DMA_InitStructure.DMA_BufferSize          = <span class="mp">NOFCHANEL</span>;
+    DMA_InitStructure.DMA_PeripheralInc       = <span class="mp">DMA_PeripheralInc_Disable</span>;
+    DMA_InitStructure.DMA_MemoryInc           = <span class="mp">DMA_MemoryInc_Enable</span>;
+    DMA_InitStructure.DMA_PeripheralDataSize  = <span class="mp">DMA_PeripheralDataSize_HalfWord</span>;
+    DMA_InitStructure.DMA_MemoryDataSize      = <span class="mp">DMA_MemoryDataSize_HalfWord</span>;
+    DMA_InitStructure.DMA_Mode                = <span class="mp">DMA_Mode_Circular</span>;
+    DMA_InitStructure.DMA_Priority            = <span class="mp">DMA_Priority_High</span>;
+    DMA_InitStructure.DMA_M2M                 = <span class="mp">DMA_M2M_Disable</span>;
+    <span class="fn">DMA_Init</span>(ADC_DMA_CHANNEL, &amp;DMA_InitStructure);
+    <span class="fn">DMA_Cmd</span>(ADC_DMA_CHANNEL, <span class="kw">ENABLE</span>);
+
+    ADC_InitStructure.ADC_Mode               = <span class="mp">ADC_Mode_Independent</span>;
+    ADC_InitStructure.ADC_ScanConvMode        = <span class="kw">ENABLE</span>;
+    ADC_InitStructure.ADC_ContinuousConvMode  = <span class="kw">ENABLE</span>;
+    ADC_InitStructure.ADC_ExternalTrigConv    = <span class="mp">ADC_ExternalTrigConv_None</span>;
+    ADC_InitStructure.ADC_DataAlign           = <span class="mp">ADC_DataAlign_Right</span>;
+    ADC_InitStructure.ADC_NbrOfChannel        = <span class="mp">NOFCHANEL</span>;
+    <span class="fn">ADC_Init</span>(ADC_x, &amp;ADC_InitStructure);
+
+    <span class="fn">ADC_RegularChannelConfig</span>(ADC_x, <span class="mp">ADC_CHANNEL1</span>, <span class="num">1</span>, <span class="mp">ADC_SampleTime_55Cycles5</span>);
+    <span class="fn">ADC_DMACmd</span>(ADC_x, <span class="kw">ENABLE</span>);
+    <span class="fn">ADC_Cmd</span>(ADC_x, <span class="kw">ENABLE</span>);
+
+    <span class="fn">ADC_ResetCalibration</span>(ADC_x);
+    <span class="kw">while</span>(<span class="fn">ADC_GetResetCalibrationStatus</span>(ADC_x));
+    <span class="fn">ADC_StartCalibration</span>(ADC_x);
+    <span class="kw">while</span>(<span class="fn">ADC_GetCalibrationStatus</span>(ADC_x));
+
+    <span class="fn">ADC_SoftwareStartConvCmd</span>(ADC_x, <span class="kw">ENABLE</span>);
+}
+
+<span class="kw">void</span> <span class="fn">ADCx_Init</span>(<span class="kw">void</span>)
+{
+    <span class="fn">ADCx_GPIO_Config</span>();
+    <span class="fn">ADCx_Mode_Config</span>();
+}</pre>
+</div>
+
+<!-- ========== 6. 相关文件清单 ========== -->
+<div class="card">
+<h2>6. 相关文件清单</h2>
+<table>
+  <tr><th>文件名</th><th>路径</th><th>说明</th></tr>
+  <tr><td>bsp_adc.h</td><td>BSP/bsp_adc.h</td><td>ADC 引脚、时钟、DMA 通道宏定义及函数声明</td></tr>
+  <tr><td>bsp_adc.c</td><td>BSP/bsp_adc.c</td><td>GPIO 初始化、ADC+DMA 模式配置、初始化入口</td></tr>
+  <tr><td>main.c</td><td>Main/main.c</td><td><code>ADC_To_Humidity()</code> 转换函数及 DRY/WET 标定常数</td></tr>
+  <tr><td>stm32f10x_adc.h</td><td>Libraries/FWlib/inc/</td><td>标准外设库 ADC 头文件</td></tr>
+  <tr><td>stm32f10x_dma.h</td><td>Libraries/FWlib/inc/</td><td>标准外设库 DMA 头文件</td></tr>
+</table>
+</div>
+
+</div>
+</body>
+</html>

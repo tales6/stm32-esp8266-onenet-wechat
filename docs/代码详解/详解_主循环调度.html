@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>主循环调度与控制逻辑模块详解</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+  background: #e8f5e9;
+  color: #1b5e20;
+  line-height: 1.8;
+}
+.header {
+  background: linear-gradient(135deg, #004d40, #00695c);
+  color: #fff;
+  padding: 2.5rem 2rem 2rem;
+  text-align: center;
+}
+.header h1 { font-size: 2rem; letter-spacing: 2px; }
+.header .sub { font-size: 0.95rem; opacity: .85; margin-top: 6px; }
+nav {
+  position: sticky; top: 0; z-index: 100;
+  background: #1b5e20;
+  padding: 10px 16px;
+  display: flex; flex-wrap: wrap; gap: 6px 12px;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(0,0,0,.25);
+}
+nav a {
+  color: #c8e6c9;
+  text-decoration: none;
+  font-size: 0.88rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background .2s;
+}
+nav a:hover { background: #2e7d32; color: #fff; }
+.container { max-width: 960px; margin: 0 auto; padding: 24px 16px 60px; }
+section {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.08);
+  padding: 28px 30px;
+  margin-bottom: 24px;
+}
+section h2 {
+  font-size: 1.35rem;
+  color: #004d40;
+  border-left: 4px solid #004d40;
+  padding-left: 14px;
+  margin-bottom: 18px;
+}
+section h3 {
+  font-size: 1.05rem;
+  color: #1b5e20;
+  margin: 20px 0 10px;
+}
+section p { margin-bottom: 14px; }
+section ul, section ol { margin-bottom: 14px; padding-left: 24px; }
+section li { margin-bottom: 6px; }
+
+.callout {
+  border-left: 4px solid;
+  border-radius: 0 6px 6px 0;
+  padding: 12px 16px;
+  margin: 16px 0;
+  font-size: 0.92rem;
+}
+.callout.info { background: #e3f2fd; border-color: #1976d2; }
+.callout.warn { background: #fff3e0; border-color: #f57c00; }
+.callout.ok   { background: #e8f5e9; border-color: #388e3c; }
+.callout.arch { background: #f3e5f5; border-color: #7b1fa2; }
+
+pre.code-block {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  border-radius: 8px;
+  padding: 16px 18px;
+  overflow-x: auto;
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  margin: 12px 0 18px;
+  tab-size: 4;
+}
+pre.code-block .kw { color: #cba6f7; }
+pre.code-block .fn { color: #89b4fa; }
+pre.code-block .str { color: #a6e3a1; }
+pre.code-block .cm { color: #6c7086; }
+pre.code-block .num { color: #fab387; }
+pre.code-block .tp { color: #f5c2e7; }
+pre.code-block .mp { color: #f9e2af; }
+pre.code-block .op { color: #89dceb; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 14px 0 18px;
+  font-size: 0.9rem;
+}
+thead th {
+  background: #004d40;
+  color: #fff;
+  padding: 10px 12px;
+  text-align: left;
+  font-weight: 600;
+}
+tbody td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #ddd;
+}
+tbody tr:nth-child(even) { background: #f1f8e9; }
+tbody tr:hover { background: #dcedc8; }
+
+.decl {
+  background: #f1f8f5;
+  border: 1px solid #a5d6a7;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-family: Consolas, monospace;
+  font-size: 0.88rem;
+  margin: 10px 0 16px;
+  white-space: pre-wrap;
+}
+b.tag { color: #004d40; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>主循环调度与控制逻辑模块详解</h1>
+  <div class="sub">文件：Main/main.c（316 行）&nbsp;|&nbsp; 系统入口与核心调度</div>
+</div>
+
+<nav>
+  <a href="#overview">模块概述</a>
+  <a href="#globals">全局变量</a>
+  <a href="#adc">ADC 读取与转换</a>
+  <a href="#flash">Flash 阈值存储</a>
+  <a href="#motor">水泵滞回控制</a>
+  <a href="#oled">OLED 显示</a>
+  <a href="#keys">按键处理</a>
+  <a href="#main">主函数</a>
+  <a href="#timing">时序分析</a>
+  <a href="#full">完整代码</a>
+</nav>
+
+<div class="container">
+
+<!-- ==================== 1 ==================== -->
+<section id="overview">
+<h2>1. 模块概述</h2>
+<p><code>main.c</code> 是整个智能灌溉系统的入口文件和核心控制逻辑。它负责：</p>
+<ul>
+  <li>初始化所有外设（GPIO、USART、ADC、OLED、按键、水泵、报警器等）</li>
+  <li>连接 WiFi 并登录 OneNet 云平台</li>
+  <li>订阅下行主题以接收远程控制命令</li>
+  <li>进入无限循环，通过<strong>轮询调度</strong>执行 6 个周期性任务</li>
+</ul>
+
+<div class="callout arch">
+  <strong>调度策略：</strong>采用计数轮询方式，不使用 RTOS。每个主循环周期约 10ms（基于 Delay_ms(10)），通过 TimeCount 和 PingCount 计数器实现不同频率的任务调度。
+</div>
+
+<table>
+  <thead><tr><th>阶段</th><th>动作</th></tr></thead>
+  <tbody>
+    <tr><td>初始化</td><td>Delay, GPIO, USART1/USART2, ADC, OLED, Key, WaterSensor, Alarm, Motor</td></tr>
+    <tr><td>Flash 加载</td><td>从 0x0800FC00 读取上次保存的阈值</td></tr>
+    <tr><td>WiFi 连接</td><td>ESP8266_Init + ESP8266_Connect，失败则重试</td></tr>
+    <tr><td>OneNet 登录</td><td>OneNet_DevLink + OneNet_Subscribe</td></tr>
+    <tr><td>主循环</td><td>6 个任务按固定频率轮询执行</td></tr>
+  </tbody>
+</table>
+</section>
+
+<!-- ==================== 2 ==================== -->
+<section id="globals">
+<h2>2. 全局变量</h2>
+
+<table>
+  <thead><tr><th>变量</th><th>类型</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>PUBLIS_BUF</td><td>char[]</td><td>存放待发布的 JSON 属性数据缓冲区</td></tr>
+    <tr><td>TimeCount</td><td>uint16_t</td><td>主循环计数器，用于控制上传间隔（每 100 循环 = ~1s 上传一次）</td></tr>
+    <tr><td>PingCount</td><td>uint16_t</td><td>心跳计数器，每 3000 循环（~30s）发送一次 PINGREQ</td></tr>
+    <tr><td>Alarm_flag</td><td>uint8_t</td><td>缺水报警标志，湿度低于阈值时置 1</td></tr>
+    <tr><td>Humidity_Threshold</td><td>uint16_t</td><td>湿度阈值（百分比），可在 Flash 中持久化，也可被 OneNet 远程修改</td></tr>
+    <tr><td>setting_mode</td><td>uint8_t</td><td>按键设置模式标志：0 = 正常显示，1 = 阈值设置模式</td></tr>
+    <tr><td>motor_running</td><td>uint8_t</td><td>水泵运行标志：0 = 停止，1 = 运行中</td></tr>
+    <tr><td>motor_timer</td><td>uint16_t</td><td>水泵关闭延时计数器（滞回控制），每次浇水后等待 400 循环才允许关闭</td></tr>
+  </tbody>
+</table>
+</section>
+
+<!-- ==================== 3 ==================== -->
+<section id="adc">
+<h2>3. ADC 读取与转换</h2>
+
+<h3>Read_ADC — 读取 DMA 缓冲区</h3>
+<pre class="code-block"><span class="tp">uint16_t</span> <span class="fn">Read_ADC</span>(<span class="kw">void</span>)
+{
+  <span class="tp">uint32_t</span> sum = <span class="num">0</span>;
+  <span class="kw">for</span> (<span class="tp">uint8_t</span> i = <span class="num">0</span>; i < <span class="num">10</span>; i++) {
+    sum += ADC_Value[i];      <span class="cm">// 读取 DMA 循环缓冲区，取 10 次均值</span>
+  }
+  <span class="kw">return</span> sum / <span class="num">10</span>;
+}</pre>
+
+<h3>ADC_To_Humidity — 电压转湿度百分比</h3>
+<pre class="code-block"><span class="tp">uint16_t</span> <span class="fn">ADC_To_Humidity</span>(<span class="tp">uint16_t</span> adcValue)
+{
+  <span class="cm">// 土壤湿度传感器电压范围：0V(干燥) ~ 3.3V(湿润)</span>
+  <span class="cm">// STM32 ADC 12位：0 ~ 4095 对应 0 ~ 3.3V</span>
+  <span class="cm">// 线性映射到 0% ~ 100%，并做限幅</span>
+
+  <span class="tp">uint16_t</span> humidity = (adcValue * <span class="num">100</span>) / <span class="num">4095</span>;
+
+  <span class="kw">if</span> (humidity > <span class="num">100</span>) humidity = <span class="num">100</span>;  <span class="cm">// 上限钳位</span>
+  <span class="kw">if</span> (humidity < <span class="num">0</span>)   humidity = <span class="num">0</span>;    <span class="cm">// 下限钳位</span>
+
+  <span class="kw">return</span> humidity;
+}</pre>
+
+<div class="callout info">
+  <strong>线性映射关系：</strong><code>湿度(%) = (ADC值 / 4095) × 100</code>。实际使用时可根据传感器特性进行标定校准，替换为查表或多项式拟合。
+</div>
+</section>
+
+<!-- ==================== 4 ==================== -->
+<section id="flash">
+<h2>4. Flash 阈值存储</h2>
+<p>阈值数据保存在 STM32 内部 Flash 的最后一个页面（0x0800FC00），写入前使用 magic number 0xA5A5 校验数据有效性：</p>
+
+<pre class="code-block"><span class="mp">#define FLASH_THRESHOLD_ADDR</span>  0x0800FC00
+<span class="mp">#define MAGIC_NUMBER</span>          0xA5A5</pre>
+
+<pre class="code-block"><span class="cm">/* 保存阈值到 Flash */</span>
+<span class="kw">void</span> <span class="fn">Threshold_Save</span>(<span class="tp">uint16_t</span> threshold)
+{
+  <span class="fn">FLASH_Unlock</span>();
+  <span class="fn">FLASH_ErasePage</span>(FLASH_THRESHOLD_ADDR);       <span class="cm">// 擦除页面</span>
+  <span class="fn">FLASH_ProgramHalfWord</span>(FLASH_THRESHOLD_ADDR,       MAGIC_NUMBER);  <span class="cm">// 写入 Magic</span>
+  <span class="fn">FLASH_ProgramHalfWord</span>(FLASH_THRESHOLD_ADDR + 2,   threshold);     <span class="cm">// 写入阈值</span>
+  <span class="fn">FLASH_Lock</span>();
+}
+
+<span class="cm">/* 从 Flash 加载阈值 */</span>
+<span class="tp">uint16_t</span> <span class="fn">Threshold_Load</span>(<span class="kw">void</span>)
+{
+  <span class="tp">uint16_t</span> magic = *(<span class="kw">volatile</span> <span class="tp">uint16_t</span> *)FLASH_THRESHOLD_ADDR;
+  <span class="kw">if</span> (magic == MAGIC_NUMBER) {
+    <span class="kw">return</span> *(<span class="kw">volatile</span> <span class="tp">uint16_t</span> *)(FLASH_THRESHOLD_ADDR + 2);
+  }
+  <span class="kw">return</span> <span class="num">50</span>;  <span class="cm">// 默认阈值 50%</span>
+}</pre>
+
+<div class="callout warn">
+  <strong>Flash 写入注意：</strong>Flash 写入前必须执行擦除操作。每次擦除以页为单位（STM32F103 每页 1KB 或 2KB）。擦除操作耗时约 20ms，在此期间系统应避免响应中断。
+</div>
+</section>
+
+<!-- ==================== 5 ==================== -->
+<section id="motor">
+<h2>5. 水泵滞回控制 — Motor_Control_Check</h2>
+<p>水泵控制采用<strong>滞回比较</strong>策略，防止湿度在阈值附近频繁启停：</p>
+
+<pre class="code-block"><span class="kw">void</span> <span class="fn">Motor_Control_Check</span>(<span class="tp">uint16_t</span> humidity)
+{
+  <span class="kw">if</span> (humidity < Humidity_Threshold) {
+    <span class="cm">// 湿度低于阈值 → 开启水泵</span>
+    <span class="fn">GPIO_ResetBits</span>(MOTOR_PORT, MOTOR_PIN);    <span class="cm">// 低电平驱动继电器</span>
+    motor_running = <span class="num">1</span>;
+
+    <span class="cm">// 只有正在浇灌时才将报警标志置 1，并发布报警状态</span>
+    <span class="kw">if</span> (!Alarm_flag) {
+      Alarm_flag = <span class="num">1</span>;
+    }
+
+  } <span class="kw">else</span> {
+    <span class="cm">// 湿度 >= 阈值：启动延时关闭计数器</span>
+    <span class="kw">if</span> (motor_running) {
+      motor_timer++;
+      <span class="kw">if</span> (motor_timer >= <span class="num">400</span>) {        <span class="cm">// 约 4 秒</span>
+        <span class="fn">GPIO_SetBits</span>(MOTOR_PORT, MOTOR_PIN);    <span class="cm">// 关闭水泵</span>
+        motor_running = <span class="num">0</span>;
+        motor_timer = <span class="num">0</span>;
+        Alarm_flag = <span class="num">0</span>;                  <span class="cm">// 关闭报警</span>
+      }
+    }
+  }
+}</pre>
+
+<div class="callout ok">
+  <strong>滞回效果：</strong>当湿度低于阈值时立即开启水泵；当湿度恢复到阈值以上后，水泵继续运行约 4 秒（400 个主循环）才关闭，确保土壤充分吸水，避免在阈值边界处频繁切换。
+</div>
+</section>
+
+<!-- ==================== 6 ==================== -->
+<section id="oled">
+<h2>6. OLED 显示函数</h2>
+
+<h3>OLED_Display_Normal — 正常显示模式</h3>
+<pre class="code-block"><span class="kw">void</span> <span class="fn">OLED_Display_Normal</span>(<span class="tp">uint16_t</span> humidity, <span class="tp">uint16_t</span> threshold,
+  <span class="tp">uint8_t</span> alarm, <span class="tp">uint8_t</span> motor)
+{
+  <span class="tp">char</span> buf[<span class="num">32</span>];
+
+  <span class="fn">OLED_ShowString</span>(<span class="num">0</span>, <span class="num">0</span>, <span class="str">"Smart Plant Watering"</span>, <span class="num">16</span>);
+
+  <span class="fn">sprintf</span>(buf, <span class="str">"Humi: %d%%"</span>, humidity);
+  <span class="fn">OLED_ShowString</span>(<span class="num">0</span>, <span class="num">2</span>, buf, <span class="num">16</span>);
+
+  <span class="fn">sprintf</span>(buf, <span class="str">"Thre: %d%%"</span>, threshold);
+  <span class="fn">OLED_ShowString</span>(<span class="num">0</span>, <span class="num">4</span>, buf, <span class="num">16</span>);
+
+  <span class="fn">sprintf</span>(buf, <span class="str">"Alarm:%s Motor:%s"</span>,
+    alarm ? <span class="str">"ON "</span> : <span class="str">"OFF"</span>,
+    motor ? <span class="str">"ON "</span> : <span class="str">"OFF"</span>);
+  <span class="fn">OLED_ShowString</span>(<span class="num">0</span>, <span class="num">6</span>, buf, <span class="num">16</span>);
+}</pre>
+
+<h3>OLED_Display_Setting — 阈值设置模式</h3>
+<pre class="code-block"><span class="kw">void</span> <span class="fn">OLED_Display_Setting</span>(<span class="tp">uint16_t</span> threshold)
+{
+  <span class="tp">char</span> buf[<span class="num">32</span>];
+
+  <span class="fn">OLED_ShowString</span>(<span class="num">0</span>, <span class="num">0</span>, <span class="str">"  Setting Mode"</span>, <span class="num">16</span>);
+  <span class="fn">sprintf</span>(buf, <span class="str">"Threshold: %d%%"</span>, threshold);
+  <span class="fn">OLED_ShowString</span>(<span class="num">0</span>, <span class="num">3</span>, buf, <span class="num">16</span>);
+  <span class="fn">OLED_ShowString</span>(<span class="num">0</span>, <span class="num">5</span>, <span class="str">"KEY2:+5  KEY3:-5"</span>, <span class="num">16</span>);
+}</pre>
+
+<h3>OLED_ShowMsg — 状态提示</h3>
+<pre class="code-block"><span class="kw">void</span> <span class="fn">OLED_ShowMsg</span>(<span class="tp">char</span> *msg)
+{
+  <span class="fn">OLED_Clear</span>();
+  <span class="fn">OLED_ShowString</span>(<span class="num">0</span>, <span class="num">3</span>, msg, <span class="num">16</span>);
+}</pre>
+
+<div class="callout info">
+  <strong>行坐标：</strong>OLED 以 8 像素为一行，参数中的 Y 坐标（0, 2, 3, 4, 5, 6, 7）对应实际像素位置 Y × 8。16 表示使用 16 像素高度的字体。
+</div>
+</section>
+
+<!-- ==================== 7 ==================== -->
+<section id="keys">
+<h2>7. 按键处理 — Handle_Keys</h2>
+<p>系统支持 4 个物理按键，功能分配如下：</p>
+
+<table>
+  <thead><tr><th>按键</th><th>正常模式</th><th>设置模式</th></tr></thead>
+  <tbody>
+    <tr><td>KEY1</td><td>进入设置模式</td><td>退出并保存阈值 + 发布到 OneNet</td></tr>
+    <tr><td>KEY2</td><td>—</td><td>阈值 +5%</td></tr>
+    <tr><td>KEY3</td><td>—</td><td>阈值 -5%</td></tr>
+    <tr><td>KEY4</td><td>从 Flash 加载阈值</td><td>—</td></tr>
+  </tbody>
+</table>
+
+<pre class="code-block"><span class="kw">void</span> <span class="fn">Handle_Keys</span>(<span class="kw">void</span>)
+{
+  <span class="cm">// KEY1: 设置模式开关</span>
+  <span class="kw">if</span> (<span class="fn">KEY1_IsPressed</span>()) {
+    <span class="fn">Delay_ms</span>(<span class="num">20</span>);                    <span class="cm">// 消抖</span>
+    <span class="kw">if</span> (<span class="fn">KEY1_IsPressed</span>()) {
+      <span class="kw">if</span> (!setting_mode) {
+        setting_mode = <span class="num">1</span>;
+      } <span class="kw">else</span> {
+        <span class="cm">// 退出设置模式：保存到 Flash 并发布到云平台</span>
+        <span class="fn">Threshold_Save</span>(Humidity_Threshold);
+        setting_mode = <span class="num">0</span>;
+
+        <span class="cm">// 发布更新后的阈值到 OneNet</span>
+        <span class="fn">sprintf</span>(PUBLIS_BUF,
+          <span class="str">"{\"id\":\"123\",\"params\":{\"Threshold\":{\"value\":%d}}}"</span>,
+          Humidity_Threshold);
+        <span class="fn">OneNet_Publish</span>(PUBLIS_BUF);
+      }
+    }
+  }
+
+  <span class="cm">// KEY2: 阈值 +5%（仅设置模式有效）</span>
+  <span class="kw">if</span> (<span class="fn">KEY2_IsPressed</span>() && setting_mode) {
+    <span class="fn">Delay_ms</span>(<span class="num">20</span>);
+    <span class="kw">if</span> (<span class="fn">KEY2_IsPressed</span>()) {
+      <span class="kw">if</span> (Humidity_Threshold <= <span class="num">95</span>)
+        Humidity_Threshold += <span class="num">5</span>;
+    }
+  }
+
+  <span class="cm">// KEY3: 阈值 -5%（仅设置模式有效）</span>
+  <span class="kw">if</span> (<span class="fn">KEY3_IsPressed</span>() && setting_mode) {
+    <span class="fn">Delay_ms</span>(<span class="num">20</span>);
+    <span class="kw">if</span> (<span class="fn">KEY3_IsPressed</span>()) {
+      <span class="kw">if</span> (Humidity_Threshold >= <span class="num">5</span>)
+        Humidity_Threshold -= <span class="num">5</span>;
+    }
+  }
+
+  <span class="cm">// KEY4: 从 Flash 加载阈值</span>
+  <span class="kw">if</span> (<span class="fn">KEY4_IsPressed</span>()) {
+    <span class="fn">Delay_ms</span>(<span class="num">20</span>);
+    <span class="kw">if</span> (<span class="fn">KEY4_IsPressed</span>()) {
+      Humidity_Threshold = <span class="fn">Threshold_Load</span>();
+    }
+  }
+}</pre>
+
+<div class="callout warn">
+  <strong>消抖处理：</strong>每个按键检测都包含 20ms 延时消抖。由于主循环本身约 10ms，首次检测和消抖后二次确认可有效避免按键抖动导致的误触发。
+</div>
+</section>
+
+<!-- ==================== 8 ==================== -->
+<section id="main">
+<h2>8. 主函数 — main()</h2>
+<p>以下是完整的 main.c 源代码（316 行），展示系统的完整启动和调度流程：</p>
+
+<pre class="code-block"><span class="mp">#include</span> <span class="str">"stm32f10x.h"</span>
+<span class="mp">#include</span> <span class="str">"delay.h"</span>
+<span class="mp">#include</span> <span class="str">"usart.h"</span>
+<span class="mp">#include</span> <span class="str">"adc.h"</span>
+<span class="mp">#include</span> <span class="str">"oled.h"</span>
+<span class="mp">#include</span> <span class="str">"key.h"</span>
+<span class="mp">#include</span> <span class="str">"water_sensor.h"</span>
+<span class="mp">#include</span> <span class="str">"alarm.h"</span>
+<span class="mp">#include</span> <span class="str">"motor.h"</span>
+<span class="mp">#include</span> <span class="str">"esp8266.h"</span>
+<span class="mp">#include</span> <span class="str">"onenet.h"</span>
+<span class="mp">#include</span> <span class="str">&lt;stdio.h&gt;</span>
+
+<span class="cm">/* 全局变量 */</span>
+<span class="tp">char</span> PUBLIS_BUF[<span class="num">256</span>];
+<span class="tp">uint16_t</span> TimeCount = <span class="num">0</span>;
+<span class="tp">uint16_t</span> PingCount = <span class="num">0</span>;
+<span class="tp">uint8_t</span>  Alarm_flag = <span class="num">0</span>;
+<span class="tp">uint16_t</span> Humidity_Threshold = <span class="num">50</span>;
+<span class="tp">uint8_t</span>  setting_mode = <span class="num">0</span>;
+<span class="tp">uint8_t</span>  motor_running = <span class="num">0</span>;
+<span class="tp">uint16_t</span> motor_timer = <span class="num">0</span>;
+
+<span class="cm">/* 函数声明 */</span>
+<span class="tp">uint16_t</span> <span class="fn">Read_ADC</span>(<span class="kw">void</span>);
+<span class="tp">uint16_t</span> <span class="fn">ADC_To_Humidity</span>(<span class="tp">uint16_t</span> adc);
+<span class="kw">void</span> <span class="fn">Threshold_Save</span>(<span class="tp">uint16_t</span> th);
+<span class="tp">uint16_t</span> <span class="fn">Threshold_Load</span>(<span class="kw">void</span>);
+<span class="kw">void</span> <span class="fn">Motor_Control_Check</span>(<span class="tp">uint16_t</span> hum);
+<span class="kw">void</span> <span class="fn">OLED_Display_Normal</span>(<span class="tp">uint16_t</span> h, <span class="tp">uint16_t</span> t, <span class="tp">uint8_t</span> a, <span class="tp">uint8_t</span> m);
+<span class="kw">void</span> <span class="fn">OLED_Display_Setting</span>(<span class="tp">uint16_t</span> t);
+<span class="kw">void</span> <span class="fn">OLED_ShowMsg</span>(<span class="tp">char</span> *msg);
+<span class="kw">void</span> <span class="fn">Handle_Keys</span>(<span class="kw">void</span>);
+
+<span class="tp">uint16_t</span> <span class="fn">Read_ADC</span>(<span class="kw">void</span>)
+{
+  <span class="tp">uint32_t</span> sum = <span class="num">0</span>;
+  <span class="kw">for</span> (<span class="tp">uint8_t</span> i = <span class="num">0</span>; i < <span class="num">10</span>; i++) sum += ADC_Value[i];
+  <span class="kw">return</span> sum / <span class="num">10</span>;
+}
+
+<span class="tp">uint16_t</span> <span class="fn">ADC_To_Humidity</span>(<span class="tp">uint16_t</span> adc)
+{
+  <span class="tp">uint16_t</span> h = (adc * <span class="num">100</span>) / <span class="num">4095</span>;
+  <span class="kw">if</span> (h > <span class="num">100</span>) h = <span class="num">100</span>;
+  <span class="kw">if</span> (h < <span class="num">0</span>)   h = <span class="num">0</span>;
+  <span class="kw">return</span> h;
+}
+
+<span class="mp">#define FLASH_THRESHOLD_ADDR</span>  0x0800FC00
+<span class="mp">#define MAGIC_NUMBER</span>          0xA5A5
+
+<span class="kw">void</span> <span class="fn">Threshold_Save</span>(<span class="tp">uint16_t</span> threshold)
+{
+  <span class="fn">FLASH_Unlock</span>();
+  <span class="fn">FLASH_ErasePage</span>(FLASH_THRESHOLD_ADDR);
+  <span class="fn">FLASH_ProgramHalfWord</span>(FLASH_THRESHOLD_ADDR, MAGIC_NUMBER);
+  <span class="fn">FLASH_ProgramHalfWord</span>(FLASH_THRESHOLD_ADDR + 2, threshold);
+  <span class="fn">FLASH_Lock</span>();
+}
+
+<span class="tp">uint16_t</span> <span class="fn">Threshold_Load</span>(<span class="kw">void</span>)
+{
+  <span class="tp">uint16_t</span> magic = *(<span class="kw">volatile</span> <span class="tp">uint16_t</span> *)FLASH_THRESHOLD_ADDR;
+  <span class="kw">if</span> (magic == MAGIC_NUMBER)
+    <span class="kw">return</span> *(<span class="kw">volatile</span> <span class="tp">uint16_t</span> *)(FLASH_THRESHOLD_ADDR + 2);
+  <span class="kw">return</span> <span class="num">50</span>;
+}
+
+<span class="kw">void</span> <span class="fn">Motor_Control_Check</span>(<span class="tp">uint16_t</span> humidity)
+{
+  <span class="kw">if</span> (humidity < Humidity_Threshold) {
+    <span class="fn">GPIO_ResetBits</span>(MOTOR_PORT, MOTOR_PIN);
+    motor_running = <span class="num">1</span>;
+    <span class="kw">if</span> (!Alarm_flag) Alarm_flag = <span class="num">1</span>;
+  } <span class="kw">else</span> {
+    <span class="kw">if</span> (motor_running) {
+      motor_timer++;
+      <span class="kw">if</span> (motor_timer >= <span class="num">400</span>) {
+        <span class="fn">GPIO_SetBits</span>(MOTOR_PORT, MOTOR_PIN);
+        motor_running = <span class="num">0</span>;
+        motor_timer = <span class="num">0</span>;
+        Alarm_flag = <span class="num">0</span>;
+      }
+    }
+  }
+}
+
+<span class="kw">void</span> <span class="fn">OLED_Display_Normal</span>(<span class="tp">uint16_t</span> h, <span class="tp">uint16_t</span> t, <span class="tp">uint8_t</span> a, <span class="tp">uint8_t</span> m)
+{
+  <span class="tp">char</span> buf[<span class="num">32</span>];
+  <span class="fn">OLED_ShowString</span>(<span class="num">0</span>, <span class="num">0</span>, <span class="str">"Smart Plant Watering"</span>, <span class="num">16</span>);
+  <span class="fn">sprintf</span>(buf, <span class="str">"Humi: %d%%"</span>, h);
+  <span class="fn">OLED_ShowString</span>(<span class="num">0</span>, <span class="num">2</span>, buf, <span class="num">16</span>);
+  <span class="fn">sprintf</span>(buf, <span class="str">"Thre: %d%%"</span>, t);
+  <span class="fn">OLED_ShowString</span>(<span class="num">0</span>, <span class="num">4</span>, buf, <span class="num">16</span>);
+  <span class="fn">sprintf</span>(buf, <span class="str">"Alarm:%s Motor:%s"</span>, a ? <span class="str">"ON "</span> : <span class="str">"OFF"</span>, m ? <span class="str">"ON "</span> : <span class="str">"OFF"</span>);
+  <span class="fn">OLED_ShowString</span>(<span class="num">0</span>, <span class="num">6</span>, buf, <span class="num">16</span>);
+}
+
+<span class="kw">void</span> <span class="fn">OLED_Display_Setting</span>(<span class="tp">uint16_t</span> t)
+{
+  <span class="tp">char</span> buf[<span class="num">32</span>];
+  <span class="fn">OLED_ShowString</span>(<span class="num">0</span>, <span class="num">0</span>, <span class="str">"  Setting Mode"</span>, <span class="num">16</span>);
+  <span class="fn">sprintf</span>(buf, <span class="str">"Threshold: %d%%"</span>, t);
+  <span class="fn">OLED_ShowString</span>(<span class="num">0</span>, <span class="num">3</span>, buf, <span class="num">16</span>);
+  <span class="fn">OLED_ShowString</span>(<span class="num">0</span>, <span class="num">5</span>, <span class="str">"KEY2:+5  KEY3:-5"</span>, <span class="num">16</span>);
+}
+
+<span class="kw">void</span> <span class="fn">OLED_ShowMsg</span>(<span class="tp">char</span> *msg)
+{
+  <span class="fn">OLED_Clear</span>();
+  <span class="fn">OLED_ShowString</span>(<span class="num">0</span>, <span class="num">3</span>, msg, <span class="num">16</span>);
+}
+
+<span class="kw">void</span> <span class="fn">Handle_Keys</span>(<span class="kw">void</span>)
+{
+  <span class="kw">if</span> (<span class="fn">KEY1_IsPressed</span>()) {
+    <span class="fn">Delay_ms</span>(<span class="num">20</span>);
+    <span class="kw">if</span> (<span class="fn">KEY1_IsPressed</span>()) {
+      <span class="kw">if</span> (!setting_mode) {
+        setting_mode = <span class="num">1</span>;
+      } <span class="kw">else</span> {
+        <span class="fn">Threshold_Save</span>(Humidity_Threshold);
+        setting_mode = <span class="num">0</span>;
+        <span class="fn">sprintf</span>(PUBLIS_BUF,
+          <span class="str">"{\"id\":\"123\",\"params\":{\"Threshold\":{\"value\":%d}}}"</span>,
+          Humidity_Threshold);
+        <span class="fn">OneNet_Publish</span>(PUBLIS_BUF);
+      }
+    }
+  }
+  <span class="kw">if</span> (<span class="fn">KEY2_IsPressed</span>() && setting_mode) {
+    <span class="fn">Delay_ms</span>(<span class="num">20</span>);
+    <span class="kw">if</span> (<span class="fn">KEY2_IsPressed</span>()) {
+      <span class="kw">if</span> (Humidity_Threshold <= <span class="num">95</span>) Humidity_Threshold += <span class="num">5</span>;
+    }
+  }
+  <span class="kw">if</span> (<span class="fn">KEY3_IsPressed</span>() && setting_mode) {
+    <span class="fn">Delay_ms</span>(<span class="num">20</span>);
+    <span class="kw">if</span> (<span class="fn">KEY3_IsPressed</span>()) {
+      <span class="kw">if</span> (Humidity_Threshold >= <span class="num">5</span>) Humidity_Threshold -= <span class="num">5</span>;
+    }
+  }
+  <span class="kw">if</span> (<span class="fn">KEY4_IsPressed</span>()) {
+    <span class="fn">Delay_ms</span>(<span class="num">20</span>);
+    <span class="kw">if</span> (<span class="fn">KEY4_IsPressed</span>()) {
+      Humidity_Threshold = <span class="fn">Threshold_Load</span>();
+    }
+  }
+}
+
+<span class="cm">/* ============== 主函数入口 ============== */</span>
+<span class="tp">int</span> <span class="fn">main</span>(<span class="kw">void</span>)
+{
+  <span class="cm">/* 第一阶段：外设初始化 */</span>
+  <span class="fn">Delay_Init</span>();                  <span class="cm">// 系统延时初始化</span>
+  <span class="fn">GPIO_Remap</span>();                  <span class="cm">// GPIO 重映射（USART/ADC 引脚）</span>
+  <span class="fn">USART1_Init</span>(<span class="num">115200</span>);           <span class="cm">// 调试串口（PC 通信）</span>
+  <span class="fn">USART2_Init</span>(<span class="num">115200</span>);           <span class="cm">// ESP8266 通信串口</span>
+  <span class="fn">ADC_Init</span>();                     <span class="cm">// ADC + DMA 初始化（土壤湿度传感器）</span>
+  <span class="fn">OLED_Init</span>();                    <span class="cm">// 0.96寸 OLED 初始化</span>
+  <span class="fn">KEY_Init</span>();                     <span class="cm">// 按键初始化</span>
+  <span class="fn">WaterSensor_Init</span>();             <span class="cm">// 水位传感器初始化</span>
+  <span class="fn">Alarm_Init</span>();                   <span class="cm">// 蜂鸣器报警初始化</span>
+  <span class="fn">Motor_Init</span>();                   <span class="cm">// 水泵电机控制初始化</span>
+
+  <span class="cm">/* 第二阶段：加载阈值 */</span>
+  Humidity_Threshold = <span class="fn">Threshold_Load</span>();
+  <span class="fn">OLED_ShowMsg</span>(<span class="str">"Threshold Loaded"</span>);
+  <span class="fn">Delay_ms</span>(<span class="num">1000</span>);
+
+  <span class="cm">/* 第三阶段：连接 WiFi */</span>
+  <span class="fn">OLED_ShowMsg</span>(<span class="str">"WiFi Connecting..."</span>);
+  <span class="kw">while</span> (<span class="fn">ESP8266_Init</span>() != <span class="num">0</span>) {    <span class="cm">// 初始化 ESP8266</span>
+    <span class="fn">Delay_ms</span>(<span class="num">500</span>);
+  }
+  <span class="kw">while</span> (<span class="fn">ESP8266_Connect</span>() != <span class="num">0</span>) { <span class="cm">// 连接 WiFi（SSID/PWD 在 esp8266.h 中）</span>
+    <span class="fn">Delay_ms</span>(<span class="num">500</span>);
+  }
+  <span class="fn">OLED_ShowMsg</span>(<span class="str">"WiFi Connected!"</span>);
+  <span class="fn">Delay_ms</span>(<span class="num">1000</span>);
+
+  <span class="cm">/* 第四阶段：登录 OneNet 并订阅 */</span>
+  <span class="fn">OLED_ShowMsg</span>(<span class="str">"OneNet Linking..."</span>);
+  <span class="kw">while</span> (<span class="fn">OneNet_DevLink</span>() != <span class="num">0</span>) {   <span class="cm">// MQTT CONNECT（包含重试）</span>
+    <span class="fn">Delay_ms</span>(<span class="num">500</span>);
+  }
+  <span class="fn">OLED_ShowMsg</span>(<span class="str">"OneNet Link OK!"</span>);
+  <span class="fn">Delay_ms</span>(<span class="num">500</span>);
+
+  <span class="fn">OneNet_Subscribe</span>();              <span class="cm">// 订阅下行属性设置主题</span>
+
+  <span class="cm">/* 第五阶段：进入主循环 */</span>
+  <span class="fn">OLED_Clear</span>();
+  <span class="kw">while</span> (<span class="num">1</span>)
+  {
+    <span class="cm">/* 任务 1 — 接收 ESP8266 数据并解析 */</span>
+    <span class="tp">uint8_t</span> *recvBuf = <span class="fn">ESP8266_GetIPD</span>(<span class="num">10</span>);
+    <span class="kw">if</span> (recvBuf) {
+      <span class="fn">OneNet_RevPro</span>(recvBuf);        <span class="cm">// 核心解析函数</span>
+      <span class="fn">free</span>(recvBuf);                  <span class="cm">// 释放由 GetIPD 分配的缓冲区</span>
+    }
+
+    <span class="cm">/* 任务 2 — 按键扫描 */</span>
+    <span class="fn">Handle_Keys</span>();
+
+    <span class="cm">/* 任务 3 — 水位传感器报警检测 */</span>
+    <span class="kw">if</span> (<span class="fn">WaterSensor_IsEmpty</span>()) {
+      <span class="fn">Alarm_ON</span>();                     <span class="cm">// 水箱缺水 → 蜂鸣器报警</span>
+    } <span class="kw">else</span> {
+      <span class="fn">Alarm_OFF</span>();
+    }
+
+    <span class="cm">/* 任务 4 — 水泵控制（滞回算法，每循环执行） */</span>
+    <span class="tp">uint16_t</span> adcVal = <span class="fn">Read_ADC</span>();
+    <span class="tp">uint16_t</span> humidity = <span class="fn">ADC_To_Humidity</span>(adcVal);
+    <span class="fn">Motor_Control_Check</span>(humidity);
+
+    <span class="cm">/* 任务 5 — 数据上传（每 100 循环 = ~1 秒） */</span>
+    TimeCount++;
+    <span class="kw">if</span> (TimeCount >= <span class="num">100</span>) {
+      TimeCount = <span class="num">0</span>;
+
+      <span class="cm">// 构建 JSON 数据</span>
+      <span class="fn">sprintf</span>(PUBLIS_BUF,
+        <span class="str">"{\"id\":\"123\",\"params\":{"</span>
+        <span class="str">"\"Humidity\":{\"value\":%d},"</span>
+        <span class="str">"\"Threshold\":{\"value\":%d},"</span>
+        <span class="str">"\"alarm\":{\"value\":%s}}"</span>
+        <span class="str">"}"</span>,
+        humidity, Humidity_Threshold,
+        Alarm_flag ? <span class="str">"true"</span> : <span class="str">"false"</span>);
+
+      <span class="fn">OneNet_Publish</span>(PUBLIS_BUF);   <span class="cm">// 上传到 OneNet</span>
+
+      <span class="cm">// OLED 显示（根据设置模式选择不同界面）</span>
+      <span class="kw">if</span> (setting_mode) {
+        <span class="fn">OLED_Display_Setting</span>(Humidity_Threshold);
+      } <span class="kw">else</span> {
+        <span class="fn">OLED_Display_Normal</span>(humidity, Humidity_Threshold,
+          Alarm_flag, motor_running);
+      }
+    }
+
+    <span class="cm">/* 任务 6 — MQTT 心跳（每 3000 循环 = ~30 秒） */</span>
+    PingCount++;
+    <span class="kw">if</span> (PingCount >= <span class="num">3000</span>) {
+      PingCount = <span class="num">0</span>;
+      <span class="fn">OneNet_SendPing</span>();
+    }
+
+    <span class="fn">Delay_ms</span>(<span class="num">10</span>);                    <span class="cm">// 每个主循环周期约 10ms</span>
+  }
+}</pre>
+</section>
+
+<!-- ==================== 9 ==================== -->
+<section id="timing">
+<h2>9. 时序分析</h2>
+<p>主循环基于 <code>Delay_ms(10)</code>，每个循环周期约 10ms。任务调度通过计数器实现多级时间分片：</p>
+
+<table>
+  <thead><tr><th>任务</th><th>调度周期</th><th>计数器</th><th>计数目标</th><th>实际间隔</th></tr></thead>
+  <tbody>
+    <tr><td>ESP8266 数据接收</td><td>每循环</td><td>—</td><td>1</td><td>~10ms</td></tr>
+    <tr><td>按键扫描</td><td>每循环</td><td>—</td><td>1</td><td>~10ms</td></tr>
+    <tr><td>水位报警检测</td><td>每循环</td><td>—</td><td>1</td><td>~10ms</td></tr>
+    <tr><td>水泵控制</td><td>每循环</td><td>—</td><td>1</td><td>~10ms</td></tr>
+    <tr><td><strong>数据上传 + OLED 刷新</strong></td><td>每 100 循环</td><td>TimeCount</td><td>100</td><td><strong>~1 秒</strong></td></tr>
+    <tr><td><strong>MQTT 心跳</strong></td><td>每 3000 循环</td><td>PingCount</td><td>3000</td><td><strong>~30 秒</strong></td></tr>
+    <tr><td>水泵关闭延时</td><td>每循环</td><td>motor_timer</td><td>400</td><td>~4 秒</td></tr>
+  </tbody>
+</table>
+
+<div class="callout info">
+  <strong>时间精度：</strong>上述时间基于 <code>Delay_ms(10)</code> 在理想情况下的估计。实际周期受限于 ESP8266 数据接收等待时间、Flash 写入耗时等因素。若通信占用时间较长，实际上传间隔会略大于 1 秒。
+</div>
+
+<div class="callout ok">
+  <strong>优化建议：</strong>如需更精确的时序控制，可将 Delay_ms(10) 替换为 SysTick 定时器中断，使用标志位驱动任务调度。当前轮询方式在代码简单性和时序精确性之间取得了平衡。
+</div>
+</section>
+
+<!-- ==================== 10 ==================== -->
+<section id="full">
+<h2>10. 完整代码</h2>
+<p>以上第 8 节已展示 main.c 的完整源代码（316 行）。该文件整合了所有模块的调用，涵盖了从硬件初始化到云平台交互的完整业务流程。读者可对照前两个模块的详解（MqttKit 协议栈 + OneNet 业务层）理解各函数调用的底层实现。</p>
+
+<div class="callout arch">
+  <strong>文件依赖关系：</strong>
+  <pre style="background: transparent; color: #1b5e20; font-size: 0.85rem; margin: 8px 0;">
+  main.c
+    ├── delay.h / usart.h / adc.h / oled.h       ← 硬件抽象层
+    ├── key.h / water_sensor.h / alarm.h / motor.h ← 外设驱动
+    ├── esp8266.h                                 ← WiFi 通信
+    └── onenet.h → MqttKit.h                      ← 云平台 + 协议栈
+  </pre>
+</div>
+</section>
+
+</div><!-- /container -->
+
+</body>
+</html>

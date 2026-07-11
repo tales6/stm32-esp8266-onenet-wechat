@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>四路独立按键驱动模块详解</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; background: #e8f5e9; color: #1b5e20; line-height: 1.8; }
+header {
+  background: linear-gradient(135deg, #004d40, #00695c);
+  color: #fff; text-align: center; padding: 48px 20px 36px;
+}
+header h1 { font-size: 2rem; letter-spacing: 2px; margin-bottom: 6px; }
+header p { font-size: 0.95rem; opacity: .85; }
+nav {
+  position: sticky; top: 0; z-index: 100;
+  background: #1b5e20; padding: 10px 0; text-align: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,.3);
+}
+nav a {
+  color: #a5d6a7; text-decoration: none; margin: 0 14px;
+  font-size: 0.95rem; font-weight: 600; transition: color .2s;
+}
+nav a:hover { color: #fff; }
+.container { max-width: 960px; margin: 0 auto; padding: 30px 20px 60px; }
+.card {
+  background: #fff; border-radius: 10px; padding: 28px 32px;
+  margin-bottom: 28px; box-shadow: 0 2px 12px rgba(0,77,64,.10);
+  border-left: 4px solid #00695c;
+}
+.card h2 {
+  font-size: 1.35rem; color: #004d40; margin-bottom: 16px;
+  padding-bottom: 8px; border-bottom: 2px solid #c8e6c9;
+}
+.card h3 { font-size: 1.05rem; color: #00695c; margin: 18px 0 10px; }
+.card p { margin: 8px 0; }
+pre {
+  background: #1e1e2e; color: #cdd6f4; border-radius: 8px;
+  padding: 16px 20px; font-size: 0.85rem; font-family: 'JetBrains Mono','Fira Code','Consolas',monospace;
+  overflow-x: auto; margin: 12px 0; tab-size: 4;
+}
+pre .kw { color: #89b4fa; } pre .fn { color: #a6e3a1; }
+pre .str { color: #f9e2af; } pre .cm { color: #6c7086; font-style: italic; }
+pre .num { color: #fab387; } pre .tp { color: #94e2d5; }
+pre .mp { color: #cba6f7; } pre .op { color: #89dceb; }
+.callout {
+  border-radius: 8px; padding: 14px 18px; margin: 14px 0;
+  font-size: 0.93rem;
+}
+.callout-info { background: #e3f2fd; border-left: 4px solid #1976d2; color: #0d47a1; }
+.callout-success { background: #e8f5e9; border-left: 4px solid #2e7d32; color: #1b5e20; }
+.callout-warning { background: #fff3e0; border-left: 4px solid #e65100; color: #bf360c; }
+table {
+  width: 100%; border-collapse: collapse; margin: 12px 0;
+  font-size: 0.9rem;
+}
+th { background: #004d40; color: #fff; padding: 10px 14px; text-align: left; }
+td { padding: 9px 14px; border-bottom: 1px solid #c8e6c9; }
+tr:nth-child(even) td { background: #f1f8e9; }
+kbd {
+  background: #1b5e20; color: #fff; padding: 2px 8px;
+  border-radius: 4px; font-size: 0.8rem; font-family: inherit;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>四路独立按键驱动模块详解</h1>
+  <p>BSP/bsp_key.c + BSP/bsp_key.h &nbsp;|&nbsp; STM32F103 智能浇花系统</p>
+</header>
+
+<nav>
+  <a href="详解_ADC采集.html">ADC 采集</a>
+  <a href="详解_按键驱动.html">按键驱动</a>
+  <a href="详解_延时驱动.html">延时驱动</a>
+</nav>
+
+<div class="container">
+
+<!-- ========== 1. 模块概述 ========== -->
+<div class="card">
+<h2>1. 模块概述</h2>
+<p>本模块驱动 <strong>4 路独立物理按键</strong>，采用<strong>状态机消抖扫描</strong>算法，提供单次/连续按压两种模式。每个按键对应一个独立 GPIO 引脚，通过轮询方式检测电平变化。</p>
+
+<table>
+  <tr><th>按键</th><th>引脚</th><th>GPIO 端口</th><th>功能</th></tr>
+  <tr><td><kbd>KEY1</kbd></td><td>PB0</td><td>GPIOB</td><td>模式切换（自动/手动/阈值设）</td></tr>
+  <tr><td><kbd>KEY2</kbd></td><td>PA7</td><td>GPIOA</td><td>阈值 +5%</td></tr>
+  <tr><td><kbd>KEY3</kbd></td><td>PA3</td><td>GPIOA</td><td>阈值 -5%</td></tr>
+  <tr><td><kbd>KEY4</kbd></td><td>PA5</td><td>GPIOA</td><td>从 Flash 载入保存的阈值</td></tr>
+</table>
+
+<div class="callout callout-info">
+<strong>电路说明：</strong> 按键按下时引脚为高电平（<code>GPIO_Mode_IPD</code> 内置下拉电阻），松开时为低电平。无需外部上拉/下拉电阻。
+</div>
+</div>
+
+<!-- ========== 2. 硬件初始化 ========== -->
+<div class="card">
+<h2>2. 硬件初始化 &mdash; Key_Init</h2>
+<p>将各按键引脚配置为<strong>下拉输入模式</strong>（<code>GPIO_Mode_IPD</code>），使能 GPIOA 和 GPIOB 时钟。</p>
+
+<pre><span class="kw">void</span> <span class="fn">Key_Init</span>(<span class="kw">void</span>)
+{
+    <span class="tp">GPIO_InitTypeDef</span> GPIO_InitStructure;
+
+    <span class="fn">RCC_APB2PeriphClockCmd</span>(<span class="mp">RCC_APB2Periph_GPIOA</span> | <span class="mp">RCC_APB2Periph_GPIOB</span>, <span class="kw">ENABLE</span>);
+
+    <span class="cm">// PA7(KEY2) + PA3(KEY3) + PA5(KEY4)：下拉输入</span>
+    GPIO_InitStructure.GPIO_Pin  = <span class="mp">KEY2_PORT_PIN</span> | <span class="mp">KEY3_PORT_PIN</span> | <span class="mp">KEY4_PORT_PIN</span>;
+    GPIO_InitStructure.GPIO_Mode = <span class="mp">GPIO_Mode_IPD</span>;
+    <span class="fn">GPIO_Init</span>(<span class="mp">GPIOA</span>, &amp;GPIO_InitStructure);
+
+    <span class="cm">// PB0(KEY1)：下拉输入</span>
+    GPIO_InitStructure.GPIO_Pin  = <span class="mp">KEY1_PORT_PIN</span>;
+    <span class="fn">GPIO_Init</span>(<span class="mp">GPIOB</span>, &amp;GPIO_InitStructure);
+}</pre>
+
+<div class="callout callout-success">
+<strong>为什么用 IPD？</strong> 下拉输入确保按键松开时引脚为确定的低电平，按下时外部高电平可以可靠被检测到。相比外部下拉电阻，内置下拉节省 PCB 空间和 BOM 成本。
+</div>
+</div>
+
+<!-- ========== 3. 状态机消抖扫描 ========== -->
+<div class="card">
+<h2>3. 状态机消抖扫描 &mdash; Key_Scan</h2>
+<p>核心扫描函数，基于<strong>释放确认状态机</strong>实现按键消抖，返回 <code>1~4</code> 表示对应按键按下，<code>0</code> 表示无按键。</p>
+
+<pre><span class="cm">// mode: 0=不支持连按, 1=支持连按</span>
+<span class="cm">// 返回值: 0=无按键, 1=KEY1, 2=KEY2, 3=KEY3, 4=KEY4</span>
+<span class="cm">// 优先级: KEY1 &gt; KEY2 &gt; KEY3 &gt; KEY4</span>
+<span class="kw">uint8_t</span> <span class="fn">Key_Scan</span>(<span class="kw">uint8_t</span> mode)
+{
+    <span class="kw">static uint8_t</span> key_up = <span class="num">1</span>;       <span class="cm">// 1=按键已释放, 0=按键尚未释放</span>
+
+    <span class="kw">if</span> (mode) key_up = <span class="num">1</span>;            <span class="cm">// 连按模式：强制标记可再次检测</span>
+
+    <span class="kw">if</span> (key_up &amp;&amp; (KEY1==<span class="num">1</span> || KEY2==<span class="num">1</span> || KEY3==<span class="num">1</span> || KEY4==<span class="num">1</span>))
+    {
+        <span class="fn">DelayXms</span>(<span class="num">10</span>);                  <span class="cm">// ★ 10ms 延时消抖</span>
+        key_up = <span class="num">0</span>;                    <span class="cm">// 标记按下，防止重复触发</span>
+
+        <span class="kw">if</span> (KEY1 == <span class="num">1</span>) <span class="kw">return</span> <span class="num">1</span>;
+        <span class="kw">else if</span> (KEY2 == <span class="num">1</span>) <span class="kw">return</span> <span class="num">2</span>;
+        <span class="kw">else if</span> (KEY3 == <span class="num">1</span>) <span class="kw">return</span> <span class="num">3</span>;
+        <span class="kw">else if</span> (KEY4 == <span class="num">1</span>) <span class="kw">return</span> <span class="num">4</span>;
+    }
+    <span class="kw">else if</span> (KEY1==<span class="num">0</span> &amp;&amp; KEY2==<span class="num">0</span> &amp;&amp; KEY3==<span class="num">0</span> &amp;&amp; KEY4==<span class="num">0</span>)
+    {
+        key_up = <span class="num">1</span>;                    <span class="cm">// 所有按键释放，恢复检测</span>
+    }
+    <span class="kw">return</span> <span class="num">0</span>;
+}</pre>
+
+<div class="callout callout-warning">
+<strong>状态机原理：</strong>
+</div>
+
+<table>
+  <tr><th>状态</th><th>条件</th><th>动作</th></tr>
+  <tr><td><strong>待检测</strong> (key_up=1)</td><td>检测到任意按键 &rarr;</td><td>延时 10ms 消抖，确认后返回键值，进入"已按下"状态</td></tr>
+  <tr><td><strong>已按下</strong> (key_up=0)</td><td>有按键保持按下</td><td>不返回任何键值（阻止重复触发）</td></tr>
+  <tr><td><strong>恢复待检测</strong> (key_up=1)</td><td>全部按键释放</td><td>重置状态，允许下次按下被识别</td></tr>
+  <tr><td colspan="3"><strong>连按模式</strong> (mode=1)：检测到按键后立即将 key_up 强制设为 1，实现长按时连续返回键值</td></tr>
+</table>
+
+<div class="callout callout-info">
+<strong>优先级说明：</strong> 当多个按键同时按下时，函数按 KEY1 &rarr; KEY2 &rarr; KEY3 &rarr; KEY4 的顺序响应，仅返回优先级最高的键值。
+</div>
+</div>
+
+<!-- ========== 4. 按键定义宏 ========== -->
+<div class="card">
+<h2>4. 按键读取宏定义</h2>
+<p>通过 <code>GPIO_ReadInputDataBit</code> 读取各引脚电平，封装为类函数宏，方便在扫描函数中直接使用。</p>
+
+<pre><span class="kw">#define</span> <span class="mp">KEY1</span>  <span class="fn">GPIO_ReadInputDataBit</span>(<span class="mp">GPIOB</span>, <span class="mp">GPIO_Pin_0</span>)
+<span class="kw">#define</span> <span class="mp">KEY2</span>  <span class="fn">GPIO_ReadInputDataBit</span>(<span class="mp">GPIOA</span>, <span class="mp">GPIO_Pin_7</span>)
+<span class="kw">#define</span> <span class="mp">KEY3</span>  <span class="fn">GPIO_ReadInputDataBit</span>(<span class="mp">GPIOA</span>, <span class="mp">GPIO_Pin_3</span>)
+<span class="kw">#define</span> <span class="mp">KEY4</span>  <span class="fn">GPIO_ReadInputDataBit</span>(<span class="mp">GPIOA</span>, <span class="mp">GPIO_Pin_5</span>)</pre>
+
+<div class="callout callout-success">
+<strong>宏 vs 函数：</strong> 使用宏定义省去了函数调用开销，适合按键扫描这种高频调用的场景。实际编译后，<code>GPIO_ReadInputDataBit</code> 会被内联为位带操作或寄存器读取，效率极高。
+</div>
+</div>
+
+<!-- ========== 5. 完整代码 ========== -->
+<div class="card">
+<h2>5. 完整代码</h2>
+
+<h3>bsp_key.h</h3>
+<pre><span class="kw">#ifndef</span> BSP_KEY_H
+<span class="kw">#define</span> BSP_KEY_H
+
+<span class="kw">#include</span> <span class="str">"stm32f10x.h"</span>
+
+<span class="kw">#define</span> <span class="mp">KEY1_PORT_CLK</span>  <span class="mp">RCC_APB2Periph_GPIOB</span>
+<span class="kw">#define</span> <span class="mp">KEY1_PORT</span>      <span class="mp">GPIOB</span>
+<span class="kw">#define</span> <span class="mp">KEY1_PORT_PIN</span>  <span class="mp">GPIO_Pin_0</span>
+
+<span class="kw">#define</span> <span class="mp">KEY2_PORT_CLK</span>  <span class="mp">RCC_APB2Periph_GPIOA</span>
+<span class="kw">#define</span> <span class="mp">KEY2_PORT</span>      <span class="mp">GPIOA</span>
+<span class="kw">#define</span> <span class="mp">KEY2_PORT_PIN</span>  <span class="mp">GPIO_Pin_7</span>
+
+<span class="kw">#define</span> <span class="mp">KEY3_PORT_CLK</span>  <span class="mp">RCC_APB2Periph_GPIOA</span>
+<span class="kw">#define</span> <span class="mp">KEY3_PORT</span>      <span class="mp">GPIOA</span>
+<span class="kw">#define</span> <span class="mp">KEY3_PORT_PIN</span>  <span class="mp">GPIO_Pin_3</span>
+
+<span class="kw">#define</span> <span class="mp">KEY4_PORT_CLK</span>  <span class="mp">RCC_APB2Periph_GPIOA</span>
+<span class="kw">#define</span> <span class="mp">KEY4_PORT</span>      <span class="mp">GPIOA</span>
+<span class="kw">#define</span> <span class="mp">KEY4_PORT_PIN</span>  <span class="mp">GPIO_Pin_5</span>
+
+<span class="kw">#define</span> <span class="mp">KEY1</span>  <span class="fn">GPIO_ReadInputDataBit</span>(<span class="mp">GPIOB</span>, <span class="mp">GPIO_Pin_0</span>)
+<span class="kw">#define</span> <span class="mp">KEY2</span>  <span class="fn">GPIO_ReadInputDataBit</span>(<span class="mp">GPIOA</span>, <span class="mp">GPIO_Pin_7</span>)
+<span class="kw">#define</span> <span class="mp">KEY3</span>  <span class="fn">GPIO_ReadInputDataBit</span>(<span class="mp">GPIOA</span>, <span class="mp">GPIO_Pin_3</span>)
+<span class="kw">#define</span> <span class="mp">KEY4</span>  <span class="fn">GPIO_ReadInputDataBit</span>(<span class="mp">GPIOA</span>, <span class="mp">GPIO_Pin_5</span>)
+
+<span class="kw">void</span> <span class="fn">Key_Init</span>(<span class="kw">void</span>);
+<span class="kw">uint8_t</span> <span class="fn">Key_Scan</span>(<span class="kw">uint8_t</span> mode);
+<span class="kw">#endif</span></pre>
+
+<h3>bsp_key.c</h3>
+<pre><span class="kw">#include</span> <span class="str">"bsp_key.h"</span>
+<span class="kw">#include</span> <span class="str">"bsp_delay.h"</span>
+
+<span class="kw">void</span> <span class="fn">Key_Init</span>(<span class="kw">void</span>)
+{
+    <span class="tp">GPIO_InitTypeDef</span> GPIO_InitStructure;
+
+    <span class="fn">RCC_APB2PeriphClockCmd</span>(<span class="mp">RCC_APB2Periph_GPIOA</span> | <span class="mp">RCC_APB2Periph_GPIOB</span>, <span class="kw">ENABLE</span>);
+
+    GPIO_InitStructure.GPIO_Pin  = <span class="mp">KEY2_PORT_PIN</span> | <span class="mp">KEY3_PORT_PIN</span> | <span class="mp">KEY4_PORT_PIN</span>;
+    GPIO_InitStructure.GPIO_Mode = <span class="mp">GPIO_Mode_IPD</span>;
+    <span class="fn">GPIO_Init</span>(<span class="mp">GPIOA</span>, &amp;GPIO_InitStructure);
+
+    GPIO_InitStructure.GPIO_Pin  = <span class="mp">KEY1_PORT_PIN</span>;
+    <span class="fn">GPIO_Init</span>(<span class="mp">GPIOB</span>, &amp;GPIO_InitStructure);
+}
+
+<span class="kw">uint8_t</span> <span class="fn">Key_Scan</span>(<span class="kw">uint8_t</span> mode)
+{
+    <span class="kw">static uint8_t</span> key_up = <span class="num">1</span>;
+
+    <span class="kw">if</span> (mode) key_up = <span class="num">1</span>;
+
+    <span class="kw">if</span> (key_up &amp;&amp; (KEY1==<span class="num">1</span> || KEY2==<span class="num">1</span> || KEY3==<span class="num">1</span> || KEY4==<span class="num">1</span>))
+    {
+        <span class="fn">DelayXms</span>(<span class="num">10</span>);
+        key_up = <span class="num">0</span>;
+
+        <span class="kw">if</span> (KEY1 == <span class="num">1</span>)      <span class="kw">return</span> <span class="num">1</span>;
+        <span class="kw">else if</span> (KEY2 == <span class="num">1</span>) <span class="kw">return</span> <span class="num">2</span>;
+        <span class="kw">else if</span> (KEY3 == <span class="num">1</span>) <span class="kw">return</span> <span class="num">3</span>;
+        <span class="kw">else if</span> (KEY4 == <span class="num">1</span>) <span class="kw">return</span> <span class="num">4</span>;
+    }
+    <span class="kw">else if</span> (KEY1==<span class="num">0</span> &amp;&amp; KEY2==<span class="num">0</span> &amp;&amp; KEY3==<span class="num">0</span> &amp;&amp; KEY4==<span class="num">0</span>)
+    {
+        key_up = <span class="num">1</span>;
+    }
+    <span class="kw">return</span> <span class="num">0</span>;
+}</pre>
+</div>
+
+<!-- ========== 6. 按键功能汇总表 ========== -->
+<div class="card">
+<h2>6. 按键功能汇总表</h2>
+<table>
+  <tr><th>按键</th><th>GPIO</th><th>引脚</th><th>宏</th><th>功能</th><th>场景</th></tr>
+  <tr>
+    <td><kbd>KEY1</kbd></td><td>GPIOB</td><td>PB0</td><td><code>KEY1</code></td>
+    <td>模式切换</td><td>自动模式 &harr; 手动模式 &harr; 阈值设置</td>
+  </tr>
+  <tr>
+    <td><kbd>KEY2</kbd></td><td>GPIOA</td><td>PA7</td><td><code>KEY2</code></td>
+    <td>阈值 +5%</td><td>阈值设置模式下增加湿度阈值</td>
+  </tr>
+  <tr>
+    <td><kbd>KEY3</kbd></td><td>GPIOA</td><td>PA3</td><td><code>KEY3</code></td>
+    <td>阈值 -5%</td><td>阈值设置模式下减少湿度阈值</td>
+  </tr>
+  <tr>
+    <td><kbd>KEY4</kbd></td><td>GPIOA</td><td>PA5</td><td><code>KEY4</code></td>
+    <td>Flash 载入</td><td>从 Flash 读取保存的阈值并应用</td>
+  </tr>
+</table>
+
+<div class="callout callout-success">
+<strong>按键复用逻辑：</strong> KEY2/KEY3/KEY4 在不同模式下具有不同含义。阈值设置模式下，KEY2 和 KEY3 修改阈值；在自动/手动模式下可用于切换显示页面或触发手动浇水。
+</div>
+</div>
+
+</div>
+</body>
+</html>
